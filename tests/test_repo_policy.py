@@ -216,3 +216,17 @@ def test_action_declares_outputs_wired_to_the_run_step():
     assert step["id"] == "guardian"
     for name, spec in action["outputs"].items():
         assert spec["value"] == "${{ steps.guardian.outputs." + name + " }}"
+
+
+def _guardian_paths(workflow: str, job: str) -> set[str]:
+    steps = load(ROOT / ".github" / "workflows" / workflow)["jobs"][job]["steps"]
+    step = next(s for s in steps if s.get("uses") == "./")
+    return {p.strip() for p in step["with"]["paths"].splitlines() if p.strip()}
+
+
+def test_self_review_excludes_every_intentionally_bad_directory_in_both_workflows():
+    """Regression: Stage 6 added examples/ but only one of the two workflows excluded it,
+    so the PR that introduced it went red on its own demo inputs."""
+    bad_dirs = {"!tests/fixtures/**", "!examples/**"}
+    assert _guardian_paths("ci.yml", "action-smoke") == bad_dirs
+    assert _guardian_paths("pr-guardian.yml", "review") == bad_dirs

@@ -615,3 +615,127 @@ behaviour, threat model, cost table, limitations, Mermaid diagram and a
 production section. Treat Dependabot runs as read-only like forks. Tests keep
 the documented tables, links and claims in sync with the code.
 ```
+
+---
+
+## Stage 7 - Release prep
+
+### Five questions
+
+**1. How does a floating major tag like `@v1` work, and what is the catch?**
+`v1` is an ordinary git tag that I move to the newest `1.x.y` commit on every
+release, so consumers get fixes without editing their workflows. Moving it is
+the one force-push in the project (an explicit `refs/tags/v1` refspec so nothing
+else is pushed). The catch is that tags are mutable: anyone who can push tags
+can change what every consumer runs. So I protect `v*` tags with a ruleset (no
+deletion or update, with a bypass for me only), tell security-conscious
+consumers to pin a full commit SHA, and keep the full version tag (`v1.0.0`)
+immutable.
+
+**2. Why a release candidate and a "release gate" before `v1`?**
+`v1` tells strangers "this is stable". Everything so far was proven against
+fakes plus one live *read-only* run, so the live paths (posting a review,
+re-run reconciliation, the AI call) are unproven. The runbook makes me prove
+them on the demo PR first, including the one assumption the re-run logic rests
+on (GitHub keeps a comment's line aligned when code above it changes), and
+tag `v1.0.0-rc.1` (which no consumer follows) before the real tag. If the gate
+fails I fix forward and never touch a published tag.
+
+**3. What does your pre-publication audit check, and why does it scan history?**
+Provider-format secrets, sensitive file names, personal paths, real-looking AWS
+account IDs, and any terms I pass in at run time (employer or client names, kept
+out of the repo on purpose), across the working tree **and every commit**,
+because a secret deleted later is still public. It never prints a matched value
+(only `file:line` or `commit + pattern name`), so its output is safe to paste.
+If it finds a real secret the answer is "rotate it", not "rewrite history". It is
+a pattern scan, so it complements a real scanner (secret scanning, gitleaks)
+rather than replacing it.
+
+**4. What counts as a breaking change for a tool that gates merges?**
+The usual (removing inputs, changing defaults or exit codes) plus a
+gate-specific one: a new finding can fail a PR that was green yesterday with no
+workflow change. So a new `medium` rule is a minor bump (the default `fail-on:
+high` ignores it) with a changelog note, while a new `high`/`critical` rule, or
+raising a severity to the threshold, is a **major** bump. That policy is written
+down in the runbook so I apply it consistently.
+
+**5. Your own audit script had two bugs. What do they teach?**
+Both came from tests that used adversarial or awkward input. (a) A regex
+denial of service: my e-mail pattern began with an unbounded `[a-z]+@`, so a
+1 MB minified file with no `@` made it rescan the line from every start
+position (minutes). Fix: a cheap literal prefilter on the line, plus bounded
+quantifiers. (b) A silent false negative: under `set -o pipefail`, `grep -q`
+exits at the first match, the upstream command dies of SIGPIPE, the pipeline
+"fails", and a *found* employer name read as "not found". Fix: never use `-q`
+in a pipeline. The lesson: a tool whose job is to give a clean bill of health
+must be tested on inputs where the right answer is "not clean", and on
+pathological inputs.
+
+### One common failure and how I'd debug it
+
+**Symptom:** a consumer's workflow fails at "Set up job" with `Unable to resolve
+action siddharthtp10/pr-guardian-action@v1, unable to find version v1`.
+**Debug, in order:** (1) Does the tag exist on the remote? `git ls-remote --tags
+origin 'v1*'`. It is easy to tag locally and forget to push. (2) Does it point
+at a commit that contains `action.yml` at the repo root? `git show v1:action.yml`.
+(3) Is the repository public, or has the consumer's organisation restricted
+which Actions may run (Settings > Actions > General > allowed actions)? (4)
+Typo in owner, repo or ref. The mirror-image failure is silent: consumers on
+`@v1` not receiving a fix because I tagged `v1.0.1` but forgot to **move** `v1`.
+That is why the runbook ends the release steps with a two-line check that
+`v1` and the full version resolve to the same commit.
+
+### What the final audit found (this repository, at release prep)
+
+- **Secrets, key files, personal paths, account IDs: none**, in 13 commits across
+  all refs. This is the result that matters.
+- **Real e-mail address in history:** my GitHub merge commits carry the account's
+  e-mail. Because the repository is already public, rewriting history would not
+  un-publish it. Prevention for the future is the GitHub setting "Keep my email
+  addresses private"; the runbook lists it.
+- **16 attribution trailers** (`Co-Authored-By`, `Claude-Session`) naming AI
+  models and session links. I flagged this rather than silently keeping or
+  removing it. Being open about AI assistance is defensible and, for an
+  interview, probably better than hiding it; it is your decision, and cheaper to
+  decide before tags exist.
+- **The audit's first run also found a CI problem:** the PR that added `examples/`
+  had a red `action-smoke` check because that job did not exclude `examples/`
+  (the dogfood workflow did). Fixed, and a test now requires both workflows to
+  exclude the same directories.
+- **Not checked:** your employer's names. I do not know them, by design; run
+  with `AUDIT_EXTRA_TERMS`.
+
+### Decisions worth remembering
+
+- **Version `1.0.0`** with a release candidate first, rather than `0.x`: the API
+  surface (inputs, outputs, exit codes, rule IDs) is deliberate and documented,
+  and the gate protects the "stable" claim.
+- **No model-name or session trailer on the Stage 7 commit**, because the audit
+  itself flags them as an open decision on a public repository and adding more
+  would pre-empt it. Say the word if you want them.
+- **Settings are commands for you, not actions by me**, and each endpoint and
+  flag was checked against GitHub's OpenAPI description or `gh --help` first.
+- **The runbook is tested**: the only force-push allowed is `refs/tags/v1`, no
+  command pushes branches or `--all`/`--tags`, the `gh api` endpoints are an
+  allow-list, the release-notes `awk` command is executed, and versions in four
+  places must agree.
+
+### Not verified (be honest in the interview)
+
+No tag has been created and no `gh` or `git push` command from the runbook has
+been run: I verified flag and endpoint *existence*, not behaviour on your
+account. The ruleset bypass payload is untested (use the UI). The live gate has
+not been run, so posting, reconciliation and the AI call remain unproven live.
+The Marketplace name `PR Guardian` may already be taken.
+
+### Suggested commit
+
+```
+chore: prepare the 1.0.0 release
+
+Bump to 1.0.0, add CHANGELOG, SECURITY.md and a tested release runbook (release
+candidate, live-check gate, floating v1 tag, repository setup commands), and a
+pre-publication audit script that scans files and full history without ever
+printing a match. Fix the self-review exclusion for examples/ in the smoke job
+that turned the previous PR's check red.
+```
