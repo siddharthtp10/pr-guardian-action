@@ -28,12 +28,27 @@ class PRContext:
     head_sha: str
     is_fork: bool
     api_url: str
+    # Runs triggered by Dependabot get a read-only token and no Actions secrets,
+    # exactly like fork PRs, even though the branch lives in the same repository.
+    actor_is_dependabot: bool = False
+
+    @property
+    def read_only(self) -> bool:
+        return self.is_fork or self.actor_is_dependabot
 
     @property
     def can_post(self) -> bool:
-        """Fork PRs get a read-only token on the `pull_request` event, so we
-        must not even try to write; Stage 4 prints results instead."""
-        return not self.is_fork
+        """A read-only token cannot write, so we must not even try: results are
+        printed (annotations and the job summary need no write permission)."""
+        return not self.read_only
+
+    @property
+    def read_only_reason(self) -> str:
+        if self.is_fork:
+            return "fork pull request"
+        if self.actor_is_dependabot:
+            return "Dependabot run"
+        return ""
 
 
 def load_context(env: Mapping[str, str]) -> PRContext:
@@ -83,4 +98,7 @@ def load_context(env: Mapping[str, str]) -> PRContext:
         head_sha=head_sha,
         is_fork=head_repo != base_name,
         api_url=api_url,
+        # GITHUB_ACTOR (who triggered the run) decides the token's privileges,
+        # which is why it is used rather than the PR author.
+        actor_is_dependabot=env.get("GITHUB_ACTOR", "") == "dependabot[bot]",
     )

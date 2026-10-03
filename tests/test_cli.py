@@ -307,3 +307,16 @@ def test_step_outputs_are_written(tmp_path):
 def test_paths_exclusion_removes_files_from_review(tmp_path):
     code, text, client, _ = run_fixture(tmp_path, PRG_PATHS="!infra/**")
     assert code == EXIT_OK and client.reviews == []
+
+
+def test_dependabot_run_never_writes_but_still_gates_and_annotates(tmp_path):
+    client = FakeClient(fixture_files())
+    out = io.StringIO()
+    env = {**event_env(tmp_path), "GITHUB_ACTOR": "dependabot[bot]"}
+    code = main(env=env, out=out, client_factory=lambda c, x: client)
+    text = out.getvalue()
+    assert client.writes() == [] and "list_reviews" not in client.names()
+    assert "NOTICE: Dependabot run" in text
+    assert "Review: Dependabot run, not posting" in text
+    assert "::error file=infra/main.tf,line=3" in text
+    assert code == EXIT_FINDINGS  # still gated by fail-on, not by a 403

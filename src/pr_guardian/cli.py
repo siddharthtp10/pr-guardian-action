@@ -77,11 +77,11 @@ def main(
         print(f"::error title=Unsupported event::{escape_workflow_data(str(exc))}", file=out)
         return EXIT_CONFIG
 
-    if ctx.is_fork:
+    if ctx.read_only:
         # Say it in the output, not just in the docs: people debugging "why no
         # comments on this PR?" read the log first.
         print(
-            "NOTICE: fork pull request. GitHub gives fork PRs a read-only token and no "
+            f"NOTICE: {ctx.read_only_reason}. GitHub gives these runs a read-only token and no "
             "secrets, so this run is rules-only and results are printed, not posted.",
             file=out,
         )
@@ -130,7 +130,10 @@ def main(
     if config.dry_run:
         print("Review: dry-run, not posting.", file=out)
     elif not ctx.can_post:
-        print("Review: fork PR, not posting (read-only token). See the annotations.", file=out)
+        print(
+            f"Review: {ctx.read_only_reason}, not posting (read-only token). See the annotations.",
+            file=out,
+        )
     else:
         try:
             print(post_review(client, ctx, findings, selection, config.fail_on, ai), file=out)
@@ -159,11 +162,11 @@ def _run_ai(
     """
     if not config.ai_enabled:
         return None
-    if ctx.is_fork:
-        # Fork PRs normally have no secrets at all. If a key is present anyway
+    if ctx.read_only:
+        # Fork and Dependabot runs normally have no secrets at all. If a key is present anyway
         # (e.g. hard-coded in the workflow), still refuse: the PR author controls
         # the input and would be spending your money.
-        result = AIResult("skipped", "fork pull request", config.model)
+        result = AIResult("skipped", ctx.read_only_reason, config.model)
     elif not selection.targets:
         result = AIResult("skipped", "no reviewable files", config.model)
     else:

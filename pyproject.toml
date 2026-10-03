@@ -41,5 +41,6 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "B", "UP", "SIM", "S"]
 
 [tool.ruff.lint.per-file-ignores]
-# pytest uses bare `assert`; bandit's S101 would flag every test.
-"tests/**" = ["S101"]
+# pytest uses bare `assert`; bandit's S101 would flag every test. S603/S607: tests run
+# fixed git/bash commands in temporary sandboxes.
+"tests/**" = ["S101", "S603", "S607"]
