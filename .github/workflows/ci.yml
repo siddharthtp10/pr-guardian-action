@@ -63,6 +63,9 @@ jobs:
         with:
           dry-run: "true"
           fail-on: high
-          # tests/fixtures holds INTENTIONALLY bad files (they are the rule
-          # tests), so exclude them: the repo's own code must pass its own review.
-          paths: "!tests/fixtures/**"
+          # tests/fixtures and examples/ hold INTENTIONALLY bad files (rule tests
+          # and demo inputs), so exclude them: the repo's own code must pass its
+          # own review. Keep this list identical to pr-guardian.yml (a test checks).
+          paths: |
+            !tests/fixtures/**
+            !examples/**

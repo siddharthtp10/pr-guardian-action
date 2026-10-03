@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pr-guardian-action"
-version = "0.1.0"
+version = "1.0.0"
 description = "Reviews infrastructure/config pull requests with a deterministic rules engine and an optional AI layer."
 readme = "README.md"
 license = { text = "MIT" }
@@ -17,6 +17,12 @@ dependencies = ["pyyaml==6.0.3"]
 # Only installed when an Anthropic API key is supplied (see action.yml). The full
 # transitive set is hash-locked in requirements-ai.txt.
 ai = ["anthropic==1.11.0"]
+
+[project.urls]
+Homepage = "https://github.com/siddharthtp10/pr-guardian-action"
+Source = "https://github.com/siddharthtp10/pr-guardian-action"
+Issues = "https://github.com/siddharthtp10/pr-guardian-action/issues"
+Changelog = "https://github.com/siddharthtp10/pr-guardian-action/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]

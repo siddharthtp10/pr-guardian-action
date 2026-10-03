@@ -8,9 +8,12 @@ It combines a fast, deterministic **rules engine** with an optional **AI review
 layer**. Rules decide whether the check fails; AI is advisory only. With no API
 key it runs in rules-only mode and never contacts anything but GitHub.
 
-> **Status: Stage 6 of 7 (demo and docs).** Only release packaging remains.
-> This is a portfolio project: the rules are deliberately simple regexes so the
-> design is easy to read and explain. See [What I would do differently in
+> **Status: 1.0.0 release candidate.** The code, tests and docs are complete. It has
+> been verified against fakes and one live read-only run on a real PR; posting a
+> review, re-run reconciliation and the AI call still need the live checks in
+> [docs/RELEASING.md](docs/RELEASING.md), which gate the `v1` tag. This is a
+> portfolio project: the rules are deliberately simple regexes so the design is
+> easy to read and explain. See [What I would do differently in
 > production](#what-i-would-do-differently-in-production).
 
 **Contents:** [Quick start](#quick-start) · [Inputs and outputs](#inputs-and-outputs) ·
@@ -18,7 +21,7 @@ key it runs in rules-only mode and never contacts anything but GitHub.
 [Rules](#rules) · [AI review](#ai-review-optional-advisory) ·
 [Security model](#security-model) · [Cost](#cost-estimate) ·
 [Limitations](#limitations) · [Try the demo](#try-the-demo) ·
-[Production](#what-i-would-do-differently-in-production) · [Development](#development)
+[Versions](#versions-and-pinning) · [Production](#what-i-would-do-differently-in-production) · [Development](#development)
 
 ## Quick start
 
@@ -344,6 +347,26 @@ one AI call. Expect inline comments, a red check and a job summary. That is the
 point; never merge it. [`examples/README.md`](examples/README.md) lists what
 each file should trigger, and a test keeps that list true.
 
+## Versions and pinning
+
+Releases follow [Semantic Versioning](https://semver.org/) and are listed in
+[CHANGELOG.md](CHANGELOG.md). Three ways to reference the Action, from least to
+most strict:
+
+| Reference | Moves? | Use when |
+|---|---|---|
+| `@v1` | yes: newest `1.x.y` | you want fixes automatically and trust the maintainer |
+| `@v1.0.0` | no (never moved once published) | you want an exact, readable version |
+| `@<full 40-character SHA>` | never | production: a tag can be re-pointed, a commit SHA cannot |
+
+```yaml
+- uses: siddharthtp10/pr-guardian-action@<full-40-char-sha>  # v1.0.0
+```
+
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md). How
+releases and the floating tag are made, and the checks that gate them, are in
+[docs/RELEASING.md](docs/RELEASING.md).
+
 ## What I would do differently in production
 
 This project optimises for being explainable. A production version would change:
@@ -394,6 +417,14 @@ uv pip compile --python-version 3.12 --python-platform linux --generate-hashes \
   --no-header requirements.in -o requirements.txt
 uv pip compile --python-version 3.12 --python-platform linux --generate-hashes \
   --no-header requirements-ai.in -o requirements-ai.txt
+```
+
+Before making a repository public (or tagging a release), run the audit. It scans
+the tracked files **and the full history** for secrets, sensitive file names,
+personal paths and caller-supplied terms, and never prints a matched value:
+
+```bash
+AUDIT_EXTRA_TERMS="name-one,name-two" scripts/audit-public.sh
 ```
 
 Interview preparation notes for every stage are in
