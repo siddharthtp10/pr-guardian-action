@@ -142,3 +142,88 @@ file classification, selection with max-files and size caps and a visible
 skipped report, and PR context detection that refuses pull_request_target and
 flags fork PRs.
 ```
+
+---
+
+## Stage 3 - Rules engine
+
+### Five questions
+
+**1. Why a deterministic rules engine *before* the AI layer?**
+Rules are fast, free, repeatable and explainable: the same diff always gives
+the same result, so a rule can safely gate a merge. An LLM is probabilistic, can
+be manipulated by text in the diff, and costs money per run. So rules decide
+pass/fail; the AI (Stage 5) only adds advisory context.
+
+**2. How do you detect "0.0.0.0/0 in an *ingress* rule" with regex, when egress
+legitimately uses the same CIDR?**
+A single-line regex can't tell, so a rule can have a `within:` pattern: the
+line must sit inside a visible enclosing block whose opener matches (found by
+walking up by indentation). `cidr_blocks = ["0.0.0.0/0"]` inside `ingress {`
+is flagged, inside `egress {` is not. If the opener isn't in the diff we stay
+silent: we don't guess.
+
+**3. How do you flag something that is *absent*, like missing resource limits?**
+A diff only shows hunks, so "absent" can't be proven from a single line. The
+`yaml_item_missing` rule type finds the container list item, and only reports
+if the item's first line *and* the line that ends it are both visible, and the
+PR actually changed that container. If the hunk cuts the container off, it says
+nothing. I prefer a false negative I can document to a false positive that
+makes people stop reading the bot.
+
+**4. How do you keep regex rules from being a denial-of-service vector?**
+The diff is attacker-controlled, and Python's `re` has no timeout. Defences:
+patterns avoid nested quantifiers; lines over 10,000 characters are not
+scanned (and are reported as GUARD-001 instead of silently skipped, since
+padding a line is how you'd hide content); and a test runs every rule against
+hostile lines on every file type with a 1 s budget. I checked that this test
+bites: the worst real case is 2.5 ms, while one catastrophic regex such as
+`(a+)+$` takes 26 s on a 29-character input.
+
+**5. Why must a finding never include the matched text?**
+Review comments on a public repo are public. If a PR contains a leaked key and
+the bot quotes it in a comment, the bot has just published the secret a second
+time, in a place that survives force-pushes. Messages are fixed text from the
+policy file, a test asserts no secret value appears in any finding, and
+fixtures build fake keys at test time so no literal secret-shaped string is ever
+committed (it would trip GitHub push protection and my own repo scan).
+
+### One common failure and how I'd debug it
+
+**Symptom:** "my rule never fires" (a clean PR that clearly shouldn't be).
+**Debug, in order:** (1) Was the file even reviewed? Check the *Reviewing* /
+*Skipped* section of the log: wrong file type, `paths` filter, `max-files`, or
+no patch from GitHub. (2) Is the offending line *added*? Context and removed
+lines are never flagged. (3) Does the rule need context (`within`, or a
+`yaml_item_missing` block) that isn't in the visible hunk? (4) Does the line
+match the regex in isolation? Run it through `python -c` with `re` or, better,
+add it to a fixture with an `EXPECT:` marker, which makes the test show exactly
+what differs. (5) Is it a comment-only line? Only the SEC rules scan comments.
+
+### Decisions worth remembering
+
+- **Severity = impact x confidence.** Exact patterns are critical; heuristics
+  (SEC-003) are medium, so the default `fail-on: high` doesn't block merges on
+  guesses.
+- **One finding per secret.** SEC-003 excludes lines that SEC-001 already
+  reports (found when a fixture matched both).
+- **The strict loader paid for itself immediately**: it rejected my own
+  `K8S-001` id because my id regex disallowed digits.
+- **17 rules, not "about 12"**: the extras (GHA-003 script injection, TF-002,
+  K8S-004...) are the ones I'd most want to explain in an interview.
+- **Fixtures use `EXPECT:` markers and require the exact set of findings across
+  all rules**, so each fixture is simultaneously a true-positive and a
+  false-positive test.
+
+### Suggested commit
+
+```
+feat: rules engine with 17 generic policy rules and fixture tests
+
+Add a strictly validated YAML policy, an engine that flags only added lines
+and supports enclosing-block (within) and whole-container-visible
+(yaml_item_missing) checks, a guard for unscannable long lines, static
+non-echoing messages, fixture-driven true/false-positive tests, a ReDoS
+timing test and rule documentation. Adds pinned PyYAML as the first runtime
+dependency.
+```

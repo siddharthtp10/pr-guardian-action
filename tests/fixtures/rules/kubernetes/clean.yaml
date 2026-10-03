@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: web
+          image: ghcr.io/example-org/web:1.4.2
+          securityContext:
+            privileged: false
+            runAsUser: 10001
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+        - name: pinned
+          image: "busybox@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+          # limits: in a comment must not count, but this block has real ones:
+          resources:
+            limits:
+              memory: 64Mi
+        - name: templated
+          image: ${IMAGE}
+          resources:
+            limits:
+              memory: 64Mi
+        - name: helm
+          image: "{{ .Values.image }}"
+          resources:
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: data

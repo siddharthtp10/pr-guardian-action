@@ -1,0 +1,216 @@
+# Default policy. Rules are data so they can be reviewed, tested and extended
+# without touching Python. Schema (validated strictly by pr_guardian/rules.py):
+#
+#   id            PREFIX-NNN, unique
+#   severity      low | medium | high | critical
+#                 (severity = impact x confidence: heuristics get "medium")
+#   file_types    list of: terraform, kubernetes, github-actions, dockerfile, any
+#   pattern       Python regex, searched in each ADDED line
+#   message       static text posted to the PR. NEVER echoes the matched text:
+#                 comments are public and a matched string may be a secret.
+#   exclude       optional regex; a line matching it is not reported
+#   within        optional regex; the line (or a visible enclosing block opener,
+#                 found by indentation) must match it
+#   scan_comments optional, default false; true = also scan comment-only lines
+#   type          line (default) | yaml_item_missing
+#   required      yaml_item_missing only: regex that must appear in the list item
+#
+# Regexes are written to avoid nested quantifiers (catastrophic backtracking):
+# the PR diff is untrusted, and a test runs every rule against hostile input.
+version: 1
+rules:
+  # --- GitHub Actions ------------------------------------------------------
+  - id: GHA-001
+    severity: high
+    file_types: [github-actions]
+    message: >-
+      Third-party action is not pinned to a full 40-character commit SHA. Tags
+      and branches can be moved by whoever controls that repository, so the
+      code running with your token can change without a change in this repo.
+      Pin to the SHA and keep the version tag in a trailing comment.
+    pattern: |-
+      ^\s*(?:-\s+)?uses:\s*["']?(?!\./|docker://|actions/|github/)[^\s@"']+@(?![0-9a-f]{40}(?:[\s"'#]|$))[^\s"']+
+
+  - id: GHA-002
+    severity: medium
+    file_types: [github-actions]
+    message: >-
+      GitHub-maintained action is not pinned to a full commit SHA. Lower risk
+      than third-party actions, but a moved tag still changes what runs with
+      your token. Pin to the SHA and keep the version tag in a comment.
+    pattern: |-
+      ^\s*(?:-\s+)?uses:\s*["']?(?:actions|github)/[^\s@"']+@(?![0-9a-f]{40}(?:[\s"'#]|$))[^\s"']+
+
+  - id: GHA-003
+    severity: high
+    file_types: [github-actions]
+    message: >-
+      Untrusted, attacker-controllable value (PR title/body/branch name, comment
+      text, commit message...) is expanded directly inside a script. The
+      expression is substituted before the shell runs, so a crafted value
+      becomes code. Pass it through an environment variable and quote it.
+    within: |-
+      ^\s*(?:-\s+)?(?:run|script):
+    pattern: |-
+      \$\{\{\s*(?:github\.head_ref|github\.event\.(?:issue|pull_request|comment|review|review_comment|discussion|head_commit|pages|commits)[^}]*?\.(?:title|body|ref|label|message|name|email|page_name|head_ref)\b)
+
+  # --- Terraform -----------------------------------------------------------
+  - id: TF-001
+    severity: high
+    file_types: [terraform]
+    message: >-
+      Ingress rule is open to the whole internet (0.0.0.0/0 or ::/0). Restrict
+      the CIDR to the networks that need access, or put the service behind a
+      load balancer/WAF. Egress blocks are intentionally not flagged.
+    within: |-
+      ^\s*ingress\s*(?:\{|=)
+    pattern: |-
+      ["'](?:0\.0\.0\.0/0|::/0)["']
+
+  - id: TF-002
+    severity: high
+    file_types: [terraform]
+    message: >-
+      Security group ingress rule is open to the whole internet. Restrict the
+      CIDR to the networks that need access.
+    within: |-
+      ^\s*resource\s+"aws_vpc_security_group_ingress_rule"
+    pattern: |-
+      \bcidr_ipv[46]\s*=\s*["'](?:0\.0\.0\.0/0|::/0)["']
+
+  - id: TF-003
+    severity: high
+    file_types: [terraform]
+    message: >-
+      S3 ACL makes objects publicly readable or writable. Use private ACLs (or
+      none), keep Block Public Access on, and serve public content through
+      CloudFront with an origin access control.
+    pattern: |-
+      ^\s*acl\s*=\s*["']public-read(?:-write)?["']
+
+  - id: TF-004
+    severity: high
+    file_types: [terraform]
+    message: >-
+      S3 Block Public Access setting is disabled. Leaving any of the four
+      settings off removes a guard rail that prevents accidental public
+      exposure of the bucket.
+    pattern: |-
+      ^\s*(?:block_public_acls|block_public_policy|ignore_public_acls|restrict_public_buckets)\s*=\s*false\b
+
+  - id: TF-005
+    severity: high
+    file_types: [terraform]
+    message: >-
+      IAM policy allows every action ("*"). Grant only the specific actions the
+      workload needs (least privilege); use IAM Access Analyzer to find what is
+      actually used.
+    pattern: |-
+      (?i)\b"?actions?"?\s*[:=]\s*(?:\[[^\]]*)?"\*"
+
+  # --- Secrets (all file types, comments included) ------------------------
+  - id: SEC-001
+    severity: critical
+    file_types: [any]
+    scan_comments: true
+    message: >-
+      Looks like an AWS access key ID. If it is real, treat it as leaked: rotate
+      it now (removing it from git history is not enough), and use an IAM role
+      or OIDC federation instead of long-lived keys.
+    exclude: |-
+      EXAMPLE
+    pattern: |-
+      \b(?:AKIA|ASIA)[0-9A-Z]{16}\b
+
+  - id: SEC-002
+    severity: critical
+    file_types: [any]
+    scan_comments: true
+    message: >-
+      A private key is committed. Treat it as compromised: rotate it, and load
+      keys from a secret manager at runtime instead.
+    pattern: |-
+      -----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----
+
+  - id: SEC-003
+    severity: medium
+    file_types: [any]
+    scan_comments: true
+    message: >-
+      Possible hard-coded credential (a password/token/key-named field assigned
+      a literal string). If real, rotate it and load it from a secret store or
+      CI secret instead. Heuristic: dismiss if it is a harmless value.
+    # Lines holding an AWS key ID are excluded: SEC-001 already reports those,
+    # and one comment per secret is enough.
+    exclude: |-
+      (?i)change[_-]?me|example|placeholder|dummy|sample|your[_-]|<[^>]+>|\$\{|\$\(|\{\{|\bvar\.|\blocal\.|\bsecrets\.|x{4,}|\*{4,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b
+    pattern: |-
+      (?i)(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|private[_-]?key)["']?\s*[:=]\s*["'][^"'\s]{8,}["']
+
+  # --- Kubernetes ----------------------------------------------------------
+  - id: K8S-001
+    severity: medium
+    type: yaml_item_missing
+    file_types: [kubernetes]
+    message: >-
+      Container has no resources.limits. Without limits one pod can starve its
+      neighbours (CPU throttling, node OOM). Set memory and CPU limits, or rely
+      on a namespace LimitRange and dismiss this. Only reported when the whole
+      container block is visible in the diff.
+    pattern: |-
+      ^\s*(?:-\s+)?image:\s*\S
+    required: |-
+      ^\s*limits:
+
+  - id: K8S-002
+    severity: critical
+    file_types: [kubernetes]
+    message: >-
+      Privileged container: it has near-root access to the node, so a container
+      escape becomes a node takeover. Drop `privileged`, and add only the
+      specific capabilities needed.
+    pattern: |-
+      ^\s*(?:-\s+)?privileged:\s*true\b
+
+  - id: K8S-003
+    severity: high
+    file_types: [kubernetes]
+    message: >-
+      Container is configured to run as root (runAsUser 0 or runAsNonRoot
+      false). Run as a non-root UID and set runAsNonRoot: true.
+    pattern: |-
+      ^\s*(?:-\s+)?(?:runAsUser:\s*0\s*(?:#.*)?$|runAsNonRoot:\s*false\b)
+
+  - id: K8S-004
+    severity: medium
+    file_types: [kubernetes]
+    message: >-
+      Image uses the mutable :latest tag or no tag at all, so the same manifest
+      can run different code on each pull and rollbacks are unreliable. Pin a
+      version tag, ideally an @sha256 digest. (If the tag is set elsewhere, e.g.
+      Helm values, this is a false positive.)
+    exclude: |-
+      [${]
+    pattern: |-
+      ^\s*(?:-\s+)?image:\s*["']?(?:[^\s"'@#]+:latest|[^\s:"'@#]+)["']?\s*(?:#.*)?$
+
+  # --- Dockerfile ----------------------------------------------------------
+  - id: DOCKER-001
+    severity: medium
+    file_types: [dockerfile]
+    message: >-
+      Base image uses the mutable :latest tag, so builds are not reproducible
+      and can break or change without any change in this repo. Pin a version
+      tag, ideally an @sha256 digest.
+    pattern: |-
+      (?i)^\s*FROM\s+(?:--\S+\s+)*[^\s@$]+:latest(?:\s+AS\s+\S+)?\s*(?:#.*)?$
+
+  - id: DOCKER-002
+    severity: medium
+    file_types: [dockerfile]
+    message: >-
+      Image runs as root. Add a non-root USER as the last USER instruction. (If
+      this root USER is only for install steps and a later USER switches back,
+      dismiss this.)
+    pattern: |-
+      (?i)^\s*USER\s+(?:root|0)(?::\S+)?\s*(?:#.*)?$

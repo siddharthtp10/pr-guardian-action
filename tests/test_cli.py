@@ -118,3 +118,15 @@ def test_wrong_event_exits_2(tmp_path):
     out = io.StringIO()
     code = main(env={**event_env(tmp_path), "GITHUB_EVENT_NAME": "push"}, out=out)
     assert code == EXIT_CONFIG and "::error title=Unsupported event" in out.getvalue()
+
+
+def test_rules_run_end_to_end_and_report_findings(tmp_path):
+    raw = json.loads((FIXTURES / "pr_files.json").read_text())
+    result = PullFiles([_parse_file(e) for e in raw], truncated=False)
+    out = io.StringIO()
+    main(env=event_env(tmp_path), out=out, client_factory=lambda c, x: FakeClient(result))
+    text = out.getvalue()
+    assert "Rules loaded:" in text
+    assert "[HIGH] TF-003 infra/main.tf:3" in text  # acl = "public-read" on line 3
+    assert "Findings: 1 (1 high)" in text
+    assert "public-read" not in text.split("Findings:")[1]  # never echoes the diff

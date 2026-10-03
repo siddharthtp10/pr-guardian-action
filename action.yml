@@ -56,6 +56,15 @@ runs:
       with:
         python-version: "3.12"
 
+    - name: Install runtime dependencies
+      shell: bash
+      env:
+        REQUIREMENTS: ${{ github.action_path }}/requirements.txt
+      # One pinned dependency (PyYAML, to read the policy file). Everything
+      # else is standard library. Hash-pinning is listed as a production
+      # hardening step in the README.
+      run: python -m pip install --disable-pip-version-check --no-input -r "$REQUIREMENTS"
+
     - name: Run PR Guardian
       shell: bash
       # Inputs go through `env:`, never `${{ }}` inside `run:`. Interpolating
@@ -68,8 +77,7 @@ runs:
         PRG_PATHS: ${{ inputs.paths }}
         PRG_MAX_FILES: ${{ inputs.max-files }}
         PRG_DRY_RUN: ${{ inputs.dry-run }}
-        # Run straight from the action's own checkout; no pip install needed
-        # while we have zero runtime dependencies.
+        # Run straight from the action's own checkout (no package install).
         PYTHONPATH: ${{ github.action_path }}/src
         PYTHONDONTWRITEBYTECODE: "1"
       run: python -m pr_guardian

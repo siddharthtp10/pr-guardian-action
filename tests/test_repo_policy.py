@@ -81,7 +81,7 @@ def test_action_inputs_match_expected_set():
 
 def test_every_input_is_wired_to_an_env_var_the_code_reads():
     action = load(ROOT / "action.yml")
-    run_step = next(s for s in action["runs"]["steps"] if "run" in s)
+    run_step = next(s for s in action["runs"]["steps"] if s.get("name") == "Run PR Guardian")
     wired = {k for k in run_step["env"] if k.startswith("PRG_")}
     read_by_code = {
         config.ENV_GITHUB_TOKEN,
@@ -113,8 +113,26 @@ def test_anthropic_key_input_has_no_literal_default():
 
 
 def test_no_secret_shaped_strings_in_repo():
-    pattern = re.compile(r"sk-ant-[A-Za-z0-9_-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}")
+    pattern = re.compile(
+        r"sk-ant-[A-Za-z0-9_-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}"
+        r"|-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----"
+    )
     skip = {".git", ".venv", ".pytest_cache", ".ruff_cache", "__pycache__"}
     for path in ROOT.rglob("*"):
         if path.is_file() and not skip & set(path.parts) and path.suffix != ".pyc":
-            assert not pattern.search(path.read_text(errors="ignore")), path
+            for match in pattern.finditer(path.read_text(errors="ignore")):
+                # AWS's documented example key is allowed (SEC-001 ignores it too).
+                assert "EXAMPLE" in match[0], f"{path}: secret-shaped string"
+
+
+def test_runtime_dependencies_are_exactly_pinned_and_consistent():
+    import tomllib
+
+    declared = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["dependencies"]
+    lines = [
+        ln.strip()
+        for ln in (ROOT / "requirements.txt").read_text().splitlines()
+        if ln.strip() and not ln.startswith("#")
+    ]
+    assert sorted(declared) == sorted(lines)
+    assert all(re.fullmatch(r"[A-Za-z0-9_.-]+==[0-9][0-9A-Za-z.]*", d) for d in declared)

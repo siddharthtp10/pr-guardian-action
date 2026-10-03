@@ -10,8 +10,10 @@ from typing import TextIO
 from pr_guardian import __version__
 from pr_guardian.config import Config, ConfigError
 from pr_guardian.context import ContextError, PRContext, load_context
+from pr_guardian.engine import evaluate
 from pr_guardian.github_api import GitHubAPIError, GitHubClient
-from pr_guardian.report import render_selection
+from pr_guardian.report import render_findings, render_selection
+from pr_guardian.rules import RuleError, load_rules
 from pr_guardian.selection import select_files
 
 EXIT_OK = 0
@@ -90,5 +92,15 @@ def main(
 
     selection = select_files(pulled.files, config, api_truncated=pulled.truncated)
     print(render_selection(selection), file=out)
-    print("Stage 2: diff handling complete; rules engine arrives in Stage 3.", file=out)
+
+    try:
+        rules = load_rules()
+    except RuleError as exc:
+        for problem in exc.problems:
+            print(f"::error title=Invalid policy::{escape_workflow_data(problem)}", file=out)
+        return EXIT_CONFIG
+    findings = evaluate(selection.targets, rules)
+    print(f"Rules loaded: {len(rules)}", file=out)
+    print(render_findings(findings), file=out)
+    print("Stage 3: rules evaluated; posting and check status arrive in Stage 4.", file=out)
     return EXIT_OK

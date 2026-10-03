@@ -8,9 +8,10 @@ It combines a fast, deterministic **rules engine** with an optional **AI review
 layer**. Rules decide whether the check fails; AI is advisory only. With no API
 key it runs in rules-only mode.
 
-> **Status: Stage 2 of 7 (diff handling).** The Action fetches the PR's changed
-> files, filters them to supported types, maps lines to valid comment targets and
-> reports what it skipped. Rules, posting and the AI layer land in later stages.
+> **Status: Stage 3 of 7 (rules engine).** The Action fetches the PR's changed
+> files, maps lines to valid comment targets, reports what it skipped and
+> evaluates 17 rules, printing findings to the log. Posting inline comments,
+> the check status and the AI layer land in later stages.
 
 ## Usage (target design)
 
@@ -61,6 +62,14 @@ YAML file just produces no findings.
 
 Exit codes: `0` ok, `2` bad input or unsupported event, `3` GitHub API error.
 The Action runs only on `pull_request` and refuses `pull_request_target`.
+
+## Rules
+
+17 generic rules ship in [`policies/default.yaml`](src/pr_guardian/policies/default.yaml);
+see [docs/rules.md](docs/rules.md) for the table and the known blind spots.
+Rules are data (id, severity, file types, regex, message), validated strictly at
+load time, and only ever flag **added** lines. Messages are static text and
+never echo the matched line, so a secret in a diff is not re-published.
 
 ## Development
 
