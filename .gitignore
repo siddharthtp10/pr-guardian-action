@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets: this project never needs a file-based secret. If one of these shows
+# up in `git status`, something is wrong. Keys come from GitHub secrets -> env.
+.env
+.env.*
+*.pem
+*.key
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

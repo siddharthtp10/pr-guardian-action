@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pr-guardian-action"
+version = "0.1.0"
+description = "Reviews infrastructure/config pull requests with a deterministic rules engine and an optional AI layer."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+# Runtime dependencies are added (and pinned) in the stage that needs them.
+# Keeping this empty in Stage 1 means the Action has nothing to `pip install`.
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The Action runs from source via PYTHONPATH (no install step), so tests do too.
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# E/F: pyflakes+pycodestyle. I: import order. B: bugbear. UP: modern syntax.
+# SIM: simplifications. S: bandit security checks - worth it for a security tool.
+select = ["E", "F", "I", "B", "UP", "SIM", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest uses bare `assert`; bandit's S101 would flag every test.
+"tests/**" = ["S101"]

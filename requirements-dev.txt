@@ -1,0 +1,7 @@
+# Development-only tools, pinned exactly (checked against PyPI on 2026-10-03).
+# Runtime deps will live in requirements.txt once a stage needs one.
+pytest==9.1.1
+ruff==0.16.10
+pre-commit==4.6.2
+# Used by tests that parse action.yml and workflow files.
+pyyaml==6.0.3

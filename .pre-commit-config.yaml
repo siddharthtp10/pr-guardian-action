@@ -1,0 +1,19 @@
+# Install once with: pre-commit install
+# Hook repos are pinned to full commit SHAs (tag in the comment) for the same
+# reason as Actions: tags are mutable, SHAs are not.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      # Cheap last line of defence against committing a PEM key.
+      - id: detect-private-key
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: f12be1ebaa5351c1fc76472de98db2c3446c8253 # v0.16.10
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
