@@ -1,8 +1,10 @@
+from pr_guardian.ai_review import AIFinding, AIResult
 from pr_guardian.diff import parse_patch
 from pr_guardian.engine import Finding
 from pr_guardian.filetypes import FileKind
 from pr_guardian.github_api import Review, ReviewComment
 from pr_guardian.publish import (
+    AI_MARKER,
     MAX_INLINE_COMMENTS,
     REVIEW_MARKER,
     comment_marker,
@@ -151,3 +153,80 @@ def test_review_body_describes_current_state_and_commit():
     assert body.startswith(REVIEW_MARKER)
     assert "1 open finding(s)" in body and "`aaaaaaa`" in body
     assert "No open findings" in plan([]).render_body([])
+
+
+# --- advisory (AI) comments in the plan -------------------------------------------
+
+
+def ai_result(*findings, status="ok", reason=""):
+    return AIResult(status, reason, "claude-sonnet-5-5", findings=list(findings))
+
+
+def ai_item(path="a.tf", line=9):
+    return AIFinding(path, line, "reliability", "medium", "A title", "A comment.")
+
+
+def ai_comment(cid, path="a.tf", line=9, bot=True):
+    return ReviewComment(path, line, AI_MARKER + "\nadvisory", bot, cid)
+
+
+def plan_ai(findings, ai, reviews=(), comments=()):
+    return plan_review(findings, list(reviews), list(comments), selection(), "high", "a" * 40, ai)
+
+
+def test_new_ai_finding_is_planned_and_labelled():
+    p = plan_ai([], ai_result(ai_item()))
+    assert [a.line for a in p.new_ai] == [9] and not p.noop
+    [payload] = p.comments()
+    assert "AI-generated advisory" in payload["body"] and AI_MARKER in payload["body"]
+
+
+def test_ai_comment_is_not_repeated_on_the_same_line():
+    p = plan_ai([], ai_result(ai_item()), [our_review()], [ai_comment(10)])
+    assert p.new_ai == [] and p.ai_delete_ids == []
+
+
+def test_ai_comment_is_not_removed_just_because_the_model_stayed_quiet():
+    for ai in (ai_result(), None, ai_result(status="failed", reason="down")):
+        p = plan_ai([], ai, [our_review()], [ai_comment(10)])
+        assert p.ai_delete_ids == [] and p.ai_resolve_ids == [], ai
+
+
+def test_outdated_ai_comment_is_retired_even_when_the_ai_did_not_run():
+    p = plan_ai([], None, [our_review()], [ai_comment(10, line=None)])
+    assert p.ai_delete_ids == [10]
+    reply = ReviewComment("a.tf", 9, "thanks", False, 11, 10)
+    p = plan_ai([], None, [our_review()], [ai_comment(10, line=None), reply])
+    assert p.ai_resolve_ids == [10] and p.ai_delete_ids == []
+
+
+def test_human_look_alike_ai_comments_are_ignored():
+    p = plan_ai([], ai_result(ai_item()), [our_review()], [ai_comment(10, bot=False)])
+    assert [a.line for a in p.new_ai] == [9]  # not suppressed
+    assert p.ai_delete_ids == []  # and not touched
+
+
+def test_rule_comments_take_priority_for_the_inline_budget():
+    rules = [finding(line=n) for n in range(1, MAX_INLINE_COMMENTS + 1)]
+    p = plan_ai(rules, ai_result(ai_item(line=99)))
+    assert len(p.new) == MAX_INLINE_COMMENTS and p.new_ai == []
+
+
+def test_ai_on_a_line_with_a_rule_finding_is_not_double_posted():
+    p = plan_ai([finding(line=9)], ai_result(ai_item(line=9)))
+    assert p.new_ai == []
+
+
+def test_ai_comments_do_not_confuse_the_rule_reconciler():
+    # The AI marker must not match the rule-comment pattern, or a fixed rule
+    # finding's cleanup could delete AI comments (or vice versa).
+    p = plan_ai([], None, [our_review()], [ai_comment(10)])
+    assert p.delete_ids == [] and p.resolve == [] and p.kept == 0
+
+
+def test_review_body_says_when_ai_ran_and_when_it_did_not():
+    ok = plan_ai([], ai_result(ai_item()), [our_review()]).render_body([])
+    assert "AI review (advisory" in ok and "never affect the check" in ok
+    down = plan_ai([], ai_result(status="failed", reason="the API was down")).render_body([])
+    assert "AI review did not run: the API was down" in down
+    assert "AI review" not in plan_ai([], None).render_body([])

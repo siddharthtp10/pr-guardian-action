@@ -18,7 +18,8 @@ inputs:
   anthropic-api-key:
     description: >-
       Optional. Pass it from a GitHub secret (never a literal). When empty the
-      Action runs in rules-only mode.
+      Action runs in rules-only mode. Fork PRs never use it. AI findings are
+      advisory and can never fail the check.
     required: false
     default: ""
   model:
@@ -54,6 +55,9 @@ outputs:
   findings-count:
     description: Number of rule findings, at any severity.
     value: ${{ steps.guardian.outputs.findings-count }}
+  ai-findings-count:
+    description: Number of advisory AI findings (0 when the AI layer did not run).
+    value: ${{ steps.guardian.outputs.ai-findings-count }}
 
 runs:
   using: composite
@@ -68,11 +72,20 @@ runs:
     - name: Install runtime dependencies
       shell: bash
       env:
-        REQUIREMENTS: ${{ github.action_path }}/requirements.txt
-      # One pinned dependency (PyYAML, to read the policy file). Everything
-      # else is standard library. Hash-pinning is listed as a production
-      # hardening step in the README.
-      run: python -m pip install --disable-pip-version-check --no-input -r "$REQUIREMENTS"
+        ACTION_PATH: ${{ github.action_path }}
+        # A boolean derived from the input, so the key itself never reaches this
+        # step. The AI SDK is downloaded only when the AI layer can actually run:
+        # rules-only runs and fork PRs (no secrets) install just PyYAML.
+        WITH_AI: ${{ inputs.anthropic-api-key != '' && 'true' || 'false' }}
+      # --require-hashes: every package (including transitive ones) must match
+      # the SHA-256 in the lock file, so a tampered or substituted release fails
+      # the install instead of running with the job's token.
+      run: |
+        pip_install() { python -m pip install --disable-pip-version-check --no-input --require-hashes -r "$1"; }
+        pip_install "$ACTION_PATH/requirements.txt"
+        if [ "$WITH_AI" = "true" ]; then
+          pip_install "$ACTION_PATH/requirements-ai.txt"
+        fi
 
     - name: Run PR Guardian
       id: guardian

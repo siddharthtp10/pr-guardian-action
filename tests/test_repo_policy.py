@@ -125,17 +125,63 @@ def test_no_secret_shaped_strings_in_repo():
                 assert "EXAMPLE" in match[0], f"{path}: secret-shaped string"
 
 
-def test_runtime_dependencies_are_exactly_pinned_and_consistent():
+def _pins(path):
+    """name==version lines of a requirements file (ignores comments and --hash lines)."""
+    lines = [ln.strip().rstrip("\\").strip() for ln in path.read_text().splitlines()]
+    return sorted(ln for ln in lines if re.fullmatch(r"[A-Za-z0-9_.-]+==[0-9][0-9A-Za-z.]*", ln))
+
+
+def test_declared_dependencies_match_the_inputs_the_locks_are_built_from():
     import tomllib
 
-    declared = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["dependencies"]
-    lines = [
-        ln.strip()
-        for ln in (ROOT / "requirements.txt").read_text().splitlines()
-        if ln.strip() and not ln.startswith("#")
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    assert sorted(project["dependencies"]) == _pins(ROOT / "requirements.in")
+    assert sorted(project["optional-dependencies"]["ai"]) == _pins(ROOT / "requirements-ai.in")
+
+
+def test_lock_files_pin_every_package_with_hashes():
+    for name in ("requirements.txt", "requirements-ai.txt"):
+        text = (ROOT / name).read_text()
+        packages = _pins(ROOT / name)
+        assert packages, name
+        # One --hash per pinned package at least; pip --require-hashes needs it for ALL.
+        assert text.count("--hash=sha256:") >= len(packages), name
+        assert "git+" not in text and "http://" not in text and "https://" not in text, name
+
+
+def test_locks_contain_the_declared_top_level_packages():
+    assert "pyyaml==6.0.3" in _pins(ROOT / "requirements.txt")
+    assert "anthropic==1.11.0" in _pins(ROOT / "requirements-ai.txt")
+
+
+def test_dev_requirements_repeat_the_runtime_pins_exactly():
+    dev = _pins(ROOT / "requirements-dev.txt")
+    for pin in _pins(ROOT / "requirements.in") + _pins(ROOT / "requirements-ai.in"):
+        assert pin in dev, f"{pin} missing from requirements-dev.txt"
+
+
+def test_install_step_is_hash_checked_and_never_sees_the_api_key():
+    action = load(ROOT / "action.yml")
+    step = next(
+        s for s in action["runs"]["steps"] if s.get("name") == "Install runtime dependencies"
+    )
+    assert "--require-hashes" in step["run"]
+    assert "${{" not in step["run"]
+    # The step may learn WHETHER a key was given, never the key itself.
+    assert set(step["env"]) == {"ACTION_PATH", "WITH_AI"}
+    assert "inputs.anthropic-api-key" in step["env"]["WITH_AI"]
+    assert "!= ''" in step["env"]["WITH_AI"]
+    assert "requirements-ai.txt" in step["run"]
+
+
+def test_only_the_run_step_receives_the_api_key():
+    action = load(ROOT / "action.yml")
+    holders = [
+        s.get("name")
+        for s in action["runs"]["steps"]
+        if "${{ inputs.anthropic-api-key }}" in str(s.get("env", {})) + str(s.get("with", {}))
     ]
-    assert sorted(declared) == sorted(lines)
-    assert all(re.fullmatch(r"[A-Za-z0-9_.-]+==[0-9][0-9A-Za-z.]*", d) for d in declared)
+    assert holders == ["Run PR Guardian"]
 
 
 def test_repo_passes_its_own_review():

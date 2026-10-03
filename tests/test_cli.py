@@ -290,10 +290,18 @@ def test_fixed_finding_removes_its_comment_and_says_so(tmp_path):
 def test_step_outputs_are_written(tmp_path):
     output = tmp_path / "out.txt"
     run_fixture(tmp_path, GITHUB_OUTPUT=str(output))
-    assert output.read_text().splitlines() == ["conclusion=failure", "findings-count=1"]
+    assert output.read_text().splitlines() == [
+        "conclusion=failure",
+        "findings-count=1",
+        "ai-findings-count=0",
+    ]
     output.unlink()
     run_fixture(tmp_path, FakeClient(PullFiles([], False)), GITHUB_OUTPUT=str(output))
-    assert output.read_text().splitlines() == ["conclusion=success", "findings-count=0"]
+    assert output.read_text().splitlines() == [
+        "conclusion=success",
+        "findings-count=0",
+        "ai-findings-count=0",
+    ]
 
 
 def test_paths_exclusion_removes_files_from_review(tmp_path):

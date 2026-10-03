@@ -8,6 +8,7 @@ comments in later stages.
 
 from __future__ import annotations
 
+from pr_guardian.ai_review import AIResult
 from pr_guardian.config import SEVERITIES
 from pr_guardian.engine import Finding
 from pr_guardian.selection import Selection
@@ -58,4 +59,25 @@ def render_findings(findings: list[Finding]) -> str:
         # f.message comes from the policy file, never from the diff.
         out.append(f"  - [{f.severity.upper()}] {f.rule_id} {safe_name(f.path)}:{f.line}")
         out.append(f"      {f.message}")
+    return "\n".join(out)
+
+
+def render_ai(ai: AIResult) -> str:
+    """Log lines for the AI layer. Titles are sanitised model text; paths go through safe_name."""
+    if not ai.ok:
+        return f"AI review ({ai.status}): {ai.reason}. Rule results are unaffected."
+    redacted = sum(ai.redactions.values())
+    discarded = sum(ai.discarded.values())
+    out = [
+        f"AI review (advisory, {safe_name(ai.model)}): {len(ai.findings)} finding(s); "
+        f"{ai.input_tokens} in / {ai.output_tokens} out tokens, about ${ai.cost_usd:.4f}; "
+        f"{redacted} secret-like value(s) redacted before sending; "
+        f"{discarded} model finding(s) discarded."
+    ]
+    for reason, n in sorted(ai.discarded.items()):
+        out.append(f"  discarded {n}: {reason}")
+    for f in ai.findings:
+        out.append(f"  - [AI {f.category}/{f.confidence}] {safe_name(f.path)}:{f.line} {f.title}")
+    if ai.truncated_files:
+        out.append(f"  {len(ai.truncated_files)} file(s) only partly sent (input budget).")
     return "\n".join(out)

@@ -2,5 +2,8 @@
 pytest==9.1.1
 ruff==0.16.10
 pre-commit==4.6.2
-# Runtime deps (pyyaml) - also used by tests that parse workflow files.
--r requirements.txt
+# Runtime deps repeated here, unhashed: pip refuses to mix hashed and unhashed
+# requirements in one install. A test keeps these equal to the lock files.
+pyyaml==6.0.3
+# Only needed to test the optional AI layer; pinned like the runtime lock.
+anthropic==1.11.0
