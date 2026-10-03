@@ -50,8 +50,8 @@ jobs:
   action-smoke:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    # Stage 2 only reads the PR's file list, so read is enough here. (Fork PRs
-    # are downgraded to read-only by GitHub regardless.)
+    # dry-run never posts, so read is enough here. (Fork PRs are downgraded to
+    # read-only by GitHub regardless.)
     permissions:
       contents: read
       pull-requests: read
@@ -62,4 +62,7 @@ jobs:
       - uses: ./
         with:
           dry-run: "true"
-          fail-on: high
+          # This repo's test fixtures are deliberately bad Terraform/K8s files,
+          # so any PR touching them has findings. The smoke test checks that
+          # the Action runs end to end, not that this repo is clean.
+          fail-on: none

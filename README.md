@@ -8,10 +8,10 @@ It combines a fast, deterministic **rules engine** with an optional **AI review
 layer**. Rules decide whether the check fails; AI is advisory only. With no API
 key it runs in rules-only mode.
 
-> **Status: Stage 3 of 7 (rules engine).** The Action fetches the PR's changed
-> files, maps lines to valid comment targets, reports what it skipped and
-> evaluates 17 rules, printing findings to the log. Posting inline comments,
-> the check status and the AI layer land in later stages.
+> **Status: Stage 4 of 7 (posting).** The Action fetches the PR's changed
+> files, evaluates 17 rules, posts one review with inline comments, writes a job
+> summary and annotations, and fails the check on findings at or above
+> `fail-on`. The AI layer lands in Stage 5.
 
 ## Usage (target design)
 
@@ -60,8 +60,23 @@ Files are never silently dropped: anything supported but not reviewed (over
 because the API returns only the patch, not the whole file; a non-Kubernetes
 YAML file just produces no findings.
 
-Exit codes: `0` ok, `2` bad input or unsupported event, `3` GitHub API error.
-The Action runs only on `pull_request` and refuses `pull_request_target`.
+Exit codes: `0` ok, `1` findings at or above `fail-on`, `2` bad input or
+unsupported event, `3` GitHub API error (including a review that could not be
+posted). The Action runs only on `pull_request` and refuses `pull_request_target`.
+
+## Where results appear
+
+| Output | Needs write token | Notes |
+|---|---|---|
+| Check status (exit code) | no | Red when any rule finding is at or above `fail-on`. |
+| Annotations | no | `error` for failing findings, `warning` for the rest. Shown on fork PRs too. |
+| Job summary | no | Verdict, findings table, files that were not reviewed. |
+| PR review | yes | One review (`COMMENT`, never "request changes") with up to 30 inline comments; the rest go in the review body. Skipped in `dry-run` and on fork PRs. |
+
+Re-runs do not repeat themselves: a finding is not re-posted while an earlier
+PR Guardian comment for the same rule still sits on the same line. GitHub marks
+a comment outdated when its code changes, and then the finding is posted again.
+The check result never depends on existing comments.
 
 ## Rules
 

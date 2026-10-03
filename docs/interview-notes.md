@@ -227,3 +227,77 @@ non-echoing messages, fixture-driven true/false-positive tests, a ReDoS
 timing test and rule documentation. Adds pinned PyYAML as the first runtime
 dependency.
 ```
+
+---
+
+## Stage 4 - Posting results
+
+### Five questions
+
+**1. Why one review with inline comments instead of one comment per finding?**
+One review is one API call and one notification for the PR author. Twenty
+separate comments are twenty emails. The catch: GitHub validates the review as
+a whole, so a single comment on an invalid line (422) rejects all of them. Every
+finding's line comes from the parsed patch, so that should not happen, but if it
+does I retry once with the findings listed in the review body instead.
+
+**2. How do you stop the bot repeating itself on every push?**
+Each inline comment carries a hidden marker, `<!-- pr-guardian:TF-003 -->`.
+Before posting I list the PR's review comments and skip a finding when a bot
+comment with the same rule already sits on the same path and line. That key
+stays correct across pushes because GitHub moves a comment's `line` with the
+code and sets it to null once that code changes, so an outdated comment does
+not hide a new finding. Only bot comments count, so a human pasting the marker
+can't suppress anything; and the check result never looks at comments at all.
+
+**3. Why is the check status separate from the review, and why `COMMENT`?**
+The exit code is what branch protection reads, so it is the gate. Reviews are
+for humans. A bot review that "requests changes" stays blocking until someone
+dismisses it by hand, even after the fix, while a red check turns green on the
+next push by itself. So the review is always `COMMENT`, and `fail-on` drives only
+the exit code. Dry-run changes posting, not the verdict.
+
+**4. What happens on a fork PR?**
+GitHub gives `pull_request` runs from forks a read-only token, so the review
+can't be posted. Annotations and the job summary need no write permission:
+they are log lines and a file on the runner. So fork PRs still see every
+finding next to the code in the "Files changed" tab, through annotations.
+
+**5. Why not retry the POST that creates the review?**
+GETs are retried on 5xx and network errors because they are idempotent. A POST
+that times out may already have been stored; retrying could post the review
+twice. One attempt, and the de-duplication on the next run covers the gap.
+
+### One common failure and how I'd debug it
+
+**Symptom:** `::error title=Could not post review::GitHub denied access` and
+exit 3, while the annotations show the findings.
+**Debug:** the token can read but not write. The calling workflow's
+`permissions:` block needs `pull-requests: write` (listing any permission drops
+the rest to none). Not a fork? Check the "GITHUB_TOKEN Permissions" section of
+"Set up job". If the error is a 422 instead, the run fell back to a body-only
+review; compare the reported line with the PR's diff to find the mapping bug.
+
+### Decisions worth remembering
+
+- **Posting failure is loud.** A review that silently never appears looks
+  exactly like a clean PR, so it exits 3 (or 1 if findings already fail).
+- **Hostile file names, again.** Annotation properties also escape `:` and `,`
+  (else `a,line=1` moves the annotation), and Markdown puts names in code spans
+  with `|` escaped, so a name can't break the table, add a link or @-mention a team.
+- **Caps:** 30 inline comments per review, 100 rows in a table; the rest are
+  counted, never silently dropped.
+- **Not yet verified against the live API.** Tests use a fake GitHub; the
+  request shape follows the documented `line` + `side` review-comment fields.
+  The first real post will be the first PR this Action runs on with write access.
+
+### Suggested commit
+
+```
+feat: post findings as a PR review, annotations and job summary
+
+Post one COMMENT review with inline comments (capped, rest in the body), skip
+findings already commented on the same line, fall back to a body-only review on
+422, emit escaped annotations and a Markdown job summary that work on fork PRs,
+and exit 1 when findings meet fail-on. POSTs are never retried.
+```

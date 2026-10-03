@@ -1,4 +1,4 @@
-"""Entry point: read env -> validate -> fetch the PR diff -> report what will be reviewed."""
+"""Entry point: read env -> validate -> fetch the PR diff -> run rules -> report and post."""
 
 from __future__ import annotations
 
@@ -10,15 +10,17 @@ from typing import TextIO
 from pr_guardian import __version__
 from pr_guardian.config import Config, ConfigError
 from pr_guardian.context import ContextError, PRContext, load_context
-from pr_guardian.engine import evaluate
+from pr_guardian.engine import evaluate, meets_threshold
 from pr_guardian.github_api import GitHubAPIError, GitHubClient
+from pr_guardian.publish import post_review, render_annotations, render_summary
 from pr_guardian.report import render_findings, render_selection
 from pr_guardian.rules import RuleError, load_rules
 from pr_guardian.selection import select_files
 
 EXIT_OK = 0
-# 2 = "you configured me wrong", distinct from 1 = "I found problems in the PR"
-# (used from Stage 4). Distinct codes make failures debuggable from the log.
+EXIT_FINDINGS = 1  # the PR has findings at or above fail-on: the check goes red
+# 2 = "you configured me wrong", distinct from 1 = "I found problems in the PR".
+# Distinct codes make failures debuggable from the log.
 EXIT_CONFIG = 2
 EXIT_API = 3  # GitHub unreachable / token rejected: infrastructure, not the PR's fault
 
@@ -83,8 +85,9 @@ def main(
         )
 
     factory = client_factory or (lambda c, x: GitHubClient(c.github_token, x.api_url))
+    client = factory(config, ctx)
     try:
-        pulled = factory(config, ctx).list_pull_files(ctx.owner, ctx.repo, ctx.number)
+        pulled = client.list_pull_files(ctx.owner, ctx.repo, ctx.number)
     except GitHubAPIError as exc:
         message = escape_workflow_data(str(exc))
         print(f"::error title=GitHub API error::{message}", file=out)
@@ -102,5 +105,39 @@ def main(
     findings = evaluate(selection.targets, rules)
     print(f"Rules loaded: {len(rules)}", file=out)
     print(render_findings(findings), file=out)
-    print("Stage 3: rules evaluated; posting and check status arrive in Stage 4.", file=out)
-    return EXIT_OK
+    for line in render_annotations(findings, config.fail_on):
+        print(line, file=out)
+    _write_summary(env, render_summary(findings, selection, config.fail_on, config.mode), out)
+
+    failed = any(meets_threshold(f.severity, config.fail_on) for f in findings)
+    exit_code = EXIT_FINDINGS if failed else EXIT_OK
+
+    if config.dry_run:
+        print("Review: dry-run, not posting.", file=out)
+    elif not ctx.can_post:
+        print("Review: fork PR, not posting (read-only token). See the annotations.", file=out)
+    else:
+        try:
+            print(post_review(client, ctx, findings, selection, config.fail_on), file=out)
+        except GitHubAPIError as exc:
+            # Annotations and the summary are already out, so the findings are
+            # not lost. Still fail: a review that silently never appears looks
+            # exactly like a clean PR.
+            message = escape_workflow_data(str(exc))
+            print(f"::error title=Could not post review::{message}", file=out)
+            return exit_code or EXIT_API
+    return exit_code
+
+
+def _write_summary(env: Mapping[str, str], markdown: str, out: TextIO) -> None:
+    """Append to the job summary. Missing outside Actions; never fatal."""
+    path = env.get("GITHUB_STEP_SUMMARY", "")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(markdown)
+    except OSError as exc:
+        print(
+            f"::warning title=Job summary not written::{escape_workflow_data(str(exc))}", file=out
+        )
