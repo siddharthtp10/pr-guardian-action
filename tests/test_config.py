@@ -78,3 +78,10 @@ def test_secrets_never_appear_in_repr():
     text = repr(cfg)
     assert "super-secret-value" not in text
     assert "ghs_dummy_token_for_tests" not in text
+
+
+def test_exclusion_patterns_are_accepted_and_validated():
+    assert Config.from_env(env(paths="a/**,!a/skip/**")).paths == ("a/**", "!a/skip/**")
+    for bad in ("!", "!/etc/**", "!../x"):
+        with pytest.raises(ConfigError):
+            Config.from_env(env(paths=bad))

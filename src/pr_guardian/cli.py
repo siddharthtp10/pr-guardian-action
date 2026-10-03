@@ -5,17 +5,18 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Callable, Mapping
-from typing import TextIO
+from typing import Any, TextIO
 
 from pr_guardian import __version__
+from pr_guardian.ai_review import AIResult, run_ai_review
 from pr_guardian.config import Config, ConfigError
 from pr_guardian.context import ContextError, PRContext, load_context
-from pr_guardian.engine import evaluate, meets_threshold
+from pr_guardian.engine import Finding, evaluate, meets_threshold
 from pr_guardian.github_api import GitHubAPIError, GitHubClient
 from pr_guardian.publish import post_review, render_annotations, render_summary
-from pr_guardian.report import render_findings, render_selection
+from pr_guardian.report import render_ai, render_findings, render_selection
 from pr_guardian.rules import RuleError, load_rules
-from pr_guardian.selection import select_files
+from pr_guardian.selection import Selection, select_files
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1  # the PR has findings at or above fail-on: the check goes red
@@ -41,6 +42,7 @@ def main(
     env: Mapping[str, str] | None = None,
     out: TextIO | None = None,
     client_factory: Callable[[Config, PRContext], GitHubClient] | None = None,
+    ai_client_factory: Callable[[str], Any] | None = None,
 ) -> int:
     del argv  # No CLI flags: the Action's inputs are the only interface.
     env = os.environ if env is None else env
@@ -107,10 +109,23 @@ def main(
     print(render_findings(findings), file=out)
     for line in render_annotations(findings, config.fail_on):
         print(line, file=out)
-    _write_summary(env, render_summary(findings, selection, config.fail_on, config.mode), out)
+
+    ai = _run_ai(config, ctx, selection, findings, ai_client_factory, out)
+    mode = "rules+ai" if ai is not None and ai.ok else "rules-only"
+    _write_summary(env, render_summary(findings, selection, config.fail_on, mode, ai), out)
 
     failed = any(meets_threshold(f.severity, config.fail_on) for f in findings)
     exit_code = EXIT_FINDINGS if failed else EXIT_OK
+    # Step outputs let a later workflow step react (e.g. label the PR) without
+    # parsing logs. Set before posting so they exist even if posting fails.
+    _write_outputs(
+        env,
+        {
+            "conclusion": "failure" if failed else "success",
+            "findings-count": len(findings),
+            "ai-findings-count": len(ai.findings) if ai is not None and ai.ok else 0,
+        },
+    )
 
     if config.dry_run:
         print("Review: dry-run, not posting.", file=out)
@@ -118,7 +133,7 @@ def main(
         print("Review: fork PR, not posting (read-only token). See the annotations.", file=out)
     else:
         try:
-            print(post_review(client, ctx, findings, selection, config.fail_on), file=out)
+            print(post_review(client, ctx, findings, selection, config.fail_on, ai), file=out)
         except GitHubAPIError as exc:
             # Annotations and the summary are already out, so the findings are
             # not lost. Still fail: a review that silently never appears looks
@@ -127,6 +142,56 @@ def main(
             print(f"::error title=Could not post review::{message}", file=out)
             return exit_code or EXIT_API
     return exit_code
+
+
+def _run_ai(
+    config: Config,
+    ctx: PRContext,
+    selection: Selection,
+    findings: list[Finding],
+    client_factory: Callable[[str], Any] | None,
+    out: TextIO,
+) -> AIResult | None:
+    """Run the optional AI layer. None = it was never enabled (no API key).
+
+    This function can never change the verdict: it returns advisory data, and the
+    exit code is computed from `findings` (rule results) alone.
+    """
+    if not config.ai_enabled:
+        return None
+    if ctx.is_fork:
+        # Fork PRs normally have no secrets at all. If a key is present anyway
+        # (e.g. hard-coded in the workflow), still refuse: the PR author controls
+        # the input and would be spending your money.
+        result = AIResult("skipped", "fork pull request", config.model)
+    elif not selection.targets:
+        result = AIResult("skipped", "no reviewable files", config.model)
+    else:
+        result = run_ai_review(config, selection.targets, findings, client_factory=client_factory)
+    print(render_ai(result), file=out)
+    if result.status == "failed":
+        print(
+            f"::warning title=AI review failed::{escape_workflow_data(result.reason)}. "
+            "Continuing with rule results only.",
+            file=out,
+        )
+    return result
+
+
+def _write_outputs(env: Mapping[str, str], outputs: Mapping[str, str | int]) -> None:
+    """Append `name=value` lines to $GITHUB_OUTPUT. Values are only ever numbers
+    and fixed words; the newline check is defence in depth against output injection."""
+    path = env.get("GITHUB_OUTPUT", "")
+    if not path:
+        return
+    lines = []
+    for name, value in outputs.items():
+        text = str(value)
+        if "\n" in text or "\r" in text:
+            raise ValueError("output values must be single-line")
+        lines.append(f"{name}={text}\n")
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.writelines(lines)
 
 
 def _write_summary(env: Mapping[str, str], markdown: str, out: TextIO) -> None:
