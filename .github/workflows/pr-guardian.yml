@@ -1,0 +1,42 @@
+name: PR Guardian
+
+# This repository reviews its own pull requests with its own Action ("dogfooding").
+# It is also what makes the demo PR (scripts/open-demo-pr.sh) show inline comments.
+#
+# `pull_request`, never `pull_request_target`: the PR's content is untrusted, and
+# pull_request_target would run it with secrets and a write token.
+on:
+  pull_request:
+
+# The only permissions the Action needs.
+permissions:
+  contents: read
+  pull-requests: write
+
+# A new push supersedes the previous run, so a stale run cannot comment on an
+# old commit (or spend an AI call on it).
+concurrency:
+  group: pr-guardian-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      # Only needed because `uses: ./` runs the action from this checkout. A
+      # normal consumer references the published action and needs no checkout.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./
+        with:
+          fail-on: high
+          # tests/fixtures and examples/ are INTENTIONALLY bad; the repo's own
+          # code must pass its own review. The demo PR copies the examples to
+          # other paths (demo-pr/...), so it is reviewed and shows findings.
+          paths: |
+            !tests/fixtures/**
+            !examples/**
+          # Empty (so rules-only) unless the repository owner creates this
+          # secret. Fork PRs never receive it.
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}

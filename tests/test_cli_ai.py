@@ -208,3 +208,12 @@ def test_github_post_failure_still_surfaces_in_the_exit_code(tmp_path):
     gh = FakeClient(pr_files(APP), post_errors=[GitHubAPIError("denied", 403)])
     code, text, _ = run(make_env(tmp_path, fail_on="none"), gh, FakeAnthropic([ai_finding()]))
     assert "Could not post review" in text and code != EXIT_OK
+
+
+def test_dependabot_runs_skip_the_ai_even_if_a_key_is_present(tmp_path):
+    gh = FakeClient(pr_files(APP))
+    fake = FakeAnthropic([ai_finding()])
+    env = {**make_env(tmp_path), "GITHUB_ACTOR": "dependabot[bot]"}
+    code, text, factory = run(env, gh, fake)
+    assert fake.calls == [] and factory.seen == [] and gh.writes() == []
+    assert "AI review (skipped): Dependabot run" in text

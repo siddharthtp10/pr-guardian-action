@@ -187,7 +187,7 @@ def test_only_the_run_step_receives_the_api_key():
 def test_repo_passes_its_own_review():
     """Dogfood: real files from this repo must not trigger any rule.
 
-    (tests/fixtures is excluded - it is intentionally bad.) Doubles as a
+    (tests/fixtures and examples/ are excluded - they are intentionally bad.) Doubles as a
     false-positive check on real-world YAML.
     """
     from pr_guardian.engine import evaluate
@@ -199,7 +199,9 @@ def test_repo_passes_its_own_review():
     targets = []
     for path in ROOT.rglob("*"):
         rel = path.relative_to(ROOT).as_posix()
-        if not path.is_file() or rel.startswith(("tests/fixtures/", ".git/", ".venv/")):
+        if not path.is_file() or rel.startswith(
+            ("tests/fixtures/", "examples/", ".git/", ".venv/")
+        ):
             continue
         kind = classify(rel)
         if kind:

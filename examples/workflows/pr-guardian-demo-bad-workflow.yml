@@ -1,0 +1,21 @@
+# INTENTIONALLY INSECURE - a demo input for PR Guardian. Never copy this.
+#
+# It is inert by construction: it can only be started by hand
+# (workflow_dispatch) and its job never runs (`if: false`), so adding it to a
+# demo branch cannot execute anything.
+name: demo-bad-workflow
+
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  never-runs:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: some-org/deploy-action@v2
+      - name: Greet the PR
+        run: echo "Reviewing ${{ github.event.pull_request.title }}"

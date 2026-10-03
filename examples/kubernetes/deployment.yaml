@@ -1,0 +1,26 @@
+# INTENTIONALLY INSECURE - a demo input for PR Guardian. Never copy this.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+          securityContext:
+            privileged: true
+            runAsUser: 0
+      volumes:
+        - name: data
+          emptyDir: {}

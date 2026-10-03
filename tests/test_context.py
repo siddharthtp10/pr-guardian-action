@@ -67,3 +67,19 @@ def test_http_api_url_refused(tmp_path):
 def test_ghes_api_url_is_honoured(tmp_path):
     ctx = load_context(make_env(tmp_path, GITHUB_API_URL="https://ghe.example/api/v3/"))
     assert ctx.api_url == "https://ghe.example/api/v3"
+
+
+def test_dependabot_runs_are_read_only_even_on_a_same_repo_branch(tmp_path):
+    ctx = load_context(make_env(tmp_path, GITHUB_ACTOR="dependabot[bot]"))
+    assert not ctx.is_fork and ctx.actor_is_dependabot
+    assert ctx.read_only and not ctx.can_post
+    assert ctx.read_only_reason == "Dependabot run"
+
+
+def test_ordinary_actors_and_forks_are_classified_correctly(tmp_path):
+    human = load_context(make_env(tmp_path, GITHUB_ACTOR="octocat"))
+    assert human.can_post and human.read_only_reason == ""
+    fork = load_context(make_env(tmp_path, head_repo="stranger/r", GITHUB_ACTOR="octocat"))
+    assert not fork.can_post and fork.read_only_reason == "fork pull request"
+    lookalike = load_context(make_env(tmp_path, GITHUB_ACTOR="dependabot-fan"))
+    assert lookalike.can_post  # only the exact bot account is special-cased
