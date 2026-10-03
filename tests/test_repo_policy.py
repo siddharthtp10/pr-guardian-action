@@ -55,10 +55,15 @@ def test_workflows_never_use_pull_request_target(path):
 
 @pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
 def test_workflow_permissions_are_minimal(path):
-    perms = load(path).get("permissions")
-    assert perms is not None, "declare permissions explicitly; the default may be write-all"
-    allowed = {("contents", "read"), ("pull-requests", "write")}
-    assert {(k, v) for k, v in perms.items()} <= allowed
+    doc = load(path)
+    assert doc.get("permissions") is not None, "declare permissions; the default may be write-all"
+    # Job-level blocks override the top-level one, so they need checking too.
+    blocks = [doc["permissions"]] + [
+        job["permissions"] for job in doc["jobs"].values() if "permissions" in job
+    ]
+    allowed = {("contents", "read"), ("pull-requests", "read"), ("pull-requests", "write")}
+    for block in blocks:
+        assert set(block.items()) <= allowed
 
 
 def test_action_inputs_match_expected_set():
