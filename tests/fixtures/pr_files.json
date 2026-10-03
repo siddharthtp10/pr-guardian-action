@@ -1,0 +1,36 @@
+[
+  {
+    "filename": "infra/main.tf",
+    "status": "modified",
+    "patch": "@@ -1,3 +1,4 @@\n resource \"aws_s3_bucket\" \"b\" {\n   bucket = \"x\"\n+  acl    = \"public-read\"\n }",
+    "additions": 1,
+    "deletions": 0
+  },
+  {
+    "filename": "k8s/deploy.yaml",
+    "status": "added",
+    "patch": "@@ -0,0 +1,2 @@\n+kind: Deployment\n+apiVersion: apps/v1",
+    "additions": 2,
+    "deletions": 0
+  },
+  {
+    "filename": "README.md",
+    "status": "modified",
+    "patch": "@@ -1 +1 @@\n-a\n+b",
+    "additions": 1,
+    "deletions": 1
+  },
+  {
+    "filename": "old/legacy.tf",
+    "status": "removed",
+    "patch": "@@ -1 +0,0 @@\n-x",
+    "additions": 0,
+    "deletions": 1
+  },
+  {
+    "filename": "infra/big.tf",
+    "status": "modified",
+    "additions": 9000,
+    "deletions": 10
+  }
+]

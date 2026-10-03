@@ -46,8 +46,15 @@ jobs:
 
   # Dogfood: run the composite action exactly as a consumer would, in
   # rules-only dry-run mode. Catches a broken action.yml before users do.
+  # Only on pull_request: the Action refuses every other event by design.
   action-smoke:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # Stage 2 only reads the PR's file list, so read is enough here. (Fork PRs
+    # are downgraded to read-only by GitHub regardless.)
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

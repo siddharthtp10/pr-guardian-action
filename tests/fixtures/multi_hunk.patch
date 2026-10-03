@@ -1,0 +1,13 @@
+@@ -1,5 +1,6 @@
+ resource "aws_security_group" "web" {
+   name = "web"
+-  description = "old"
++  description = "new"
++  vpc_id      = var.vpc_id
+
+   ingress {
+@@ -20,2 +21,3 @@ resource "aws_s3_bucket" "logs" {
+   bucket = "logs"
++  acl    = "public-read"
+ }
+\ No newline at end of file
