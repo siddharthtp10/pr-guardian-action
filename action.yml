@@ -34,7 +34,8 @@ inputs:
   paths:
     description: >-
       Newline- or comma-separated glob patterns limiting which changed files
-      are reviewed. Empty = every supported file type.
+      are reviewed. Prefix a pattern with ! to exclude it (e.g. !examples/**).
+      Empty = every supported file type.
     required: false
     default: ""
   max-files:
@@ -42,9 +43,17 @@ inputs:
     required: false
     default: "50"
   dry-run:
-    description: "'true' prints findings to the log instead of posting a review."
+    description: "'true' prints findings without posting a review. The exit code still reflects fail-on."
     required: false
     default: "false"
+
+outputs:
+  conclusion:
+    description: "'success' or 'failure' (rule findings at or above fail-on). AI findings never affect it."
+    value: ${{ steps.guardian.outputs.conclusion }}
+  findings-count:
+    description: Number of rule findings, at any severity.
+    value: ${{ steps.guardian.outputs.findings-count }}
 
 runs:
   using: composite
@@ -66,6 +75,7 @@ runs:
       run: python -m pip install --disable-pip-version-check --no-input -r "$REQUIREMENTS"
 
     - name: Run PR Guardian
+      id: guardian
       shell: bash
       # Inputs go through `env:`, never `${{ }}` inside `run:`. Interpolating
       # inputs into the script text would let a crafted value inject shell.

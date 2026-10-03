@@ -141,8 +141,10 @@ def _parse_paths(raw: str) -> tuple[tuple[str, ...], list[str]]:
         item = item.strip()
         if not item:
             continue
-        parts = PurePosixPath(item).parts
-        if item.startswith("/") or ".." in parts:
+        # A leading "!" makes an exclusion ("!tests/fixtures/**"); validate the rest.
+        body = item[1:].strip() if item.startswith("!") else item
+        parts = PurePosixPath(body).parts
+        if not body or body.startswith("/") or ".." in parts:
             problems.append(f"paths entry must be repo-relative without '..'; got {item!r}")
         else:
             paths.append(item)

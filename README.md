@@ -41,9 +41,9 @@ jobs:
 | `anthropic-api-key` | no | `""` | Enables the AI layer. Empty = rules-only. |
 | `model` | no | `claude-sonnet-5-5` | Model for the AI layer. |
 | `fail-on` | no | `high` | `low`, `medium`, `high`, `critical` or `none`. Rules only. |
-| `paths` | no | all supported | Newline/comma separated globs to restrict review. |
+| `paths` | no | all supported | Newline/comma separated globs to restrict review. Prefix with `!` to exclude (e.g. `!examples/**`). |
 | `max-files` | no | `50` | Max files reviewed per run (1-500). |
-| `dry-run` | no | `false` | Print findings instead of posting. |
+| `dry-run` | no | `false` | Run everything except posting the review. The exit code still reflects `fail-on`. |
 
 ## What gets reviewed
 
@@ -71,12 +71,18 @@ posted). The Action runs only on `pull_request` and refuses `pull_request_target
 | Check status (exit code) | no | Red when any rule finding is at or above `fail-on`. |
 | Annotations | no | `error` for failing findings, `warning` for the rest. Shown on fork PRs too. |
 | Job summary | no | Verdict, findings table, files that were not reviewed. |
-| PR review | yes | One review (`COMMENT`, never "request changes") with up to 30 inline comments; the rest go in the review body. Skipped in `dry-run` and on fork PRs. |
+| PR review | yes | One review (`COMMENT`, never "request changes") with up to 30 inline comments, most severe first; the rest go in the review body. Skipped in `dry-run` and on fork PRs. |
+| Step outputs | no | `conclusion` (`success`/`failure`) and `findings-count`, for later workflow steps. |
 
-Re-runs do not repeat themselves: a finding is not re-posted while an earlier
-PR Guardian comment for the same rule still sits on the same line. GitHub marks
-a comment outdated when its code changes, and then the finding is posted again.
-The check result never depends on existing comments.
+Re-runs update the review instead of adding to it. The review body is edited in
+place to describe the current state, a comment that still applies is kept, new
+findings get new comments, and comments for fixed findings are deleted (or
+edited to "Resolved" when someone replied, so the conversation survives). An
+identical re-run makes no writes at all. GitHub marks a comment outdated when
+its code changes, and then the finding is posted again at its new location. The
+check result never depends on existing comments. Only comments and reviews
+authored by a bot account are ever trusted or touched, so the token must be
+`GITHUB_TOKEN` or a GitHub App token, not a personal access token.
 
 ## Rules
 

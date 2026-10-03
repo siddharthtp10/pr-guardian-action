@@ -201,3 +201,60 @@ def test_422_is_explained():
     with pytest.raises(GitHubAPIError) as err:
         client(op).create_review("o", "r", 7, commit_id="c" * 40, body="", comments=[])
     assert err.value.status == 422 and "outside the diff" in str(err.value)
+
+
+# --- Stage 4b: review reconciliation endpoints -----------------------------------
+
+
+def test_list_reviews_and_comments_parse_ids_authors_and_replies():
+    reviews = [
+        {"id": 1, "body": None, "user": {"type": "Bot"}},
+        {"id": 2, "body": "x", "user": None},
+        {"body": "no id"},
+    ]
+    comments = [
+        {
+            "id": 3,
+            "body": "b",
+            "path": "a",
+            "line": None,
+            "in_reply_to_id": 2,
+            "user": {"type": "User"},
+        },
+    ]
+    c = client(FakeOpener(ok(reviews), ok(comments)))
+    r = c.list_reviews("o", "r", 1)
+    assert [(x.id, x.body, x.author_is_bot) for x in r] == [(1, "", True), (2, "x", False)]
+    cm = c.list_review_comments("o", "r", 1)[0]
+    assert (cm.id, cm.line, cm.in_reply_to_id, cm.author_is_bot) == (3, None, 2, False)
+
+
+def test_update_and_delete_endpoints():
+    op = FakeOpener((200, {}, b"{}"), (200, {}, b"{}"), (204, {}, b""), (201, {}, b"{}"))
+    c = client(op)
+    c.update_review("o", "r", 7, 5, "new body")
+    c.update_review_comment("o", "r", 9, "resolved")
+    c.delete_review_comment("o", "r", 9)
+    c.create_review_comment("o", "r", 7, commit_id="c", path="a.tf", line=3, body="b")
+    methods = [(r.get_method(), r.full_url.removeprefix(API)) for r in op.requests]
+    assert methods == [
+        ("PUT", "/repos/o/r/pulls/7/reviews/5"),
+        ("PATCH", "/repos/o/r/pulls/comments/9"),
+        ("DELETE", "/repos/o/r/pulls/comments/9"),
+        ("POST", "/repos/o/r/pulls/7/comments"),
+    ]
+    assert json.loads(op.requests[0].data) == {"body": "new body"}
+    assert json.loads(op.requests[3].data) == {
+        "commit_id": "c",
+        "path": "a.tf",
+        "line": 3,
+        "side": "RIGHT",
+        "body": "b",
+    }
+
+
+def test_posting_a_comment_is_never_retried():
+    op = FakeOpener((502, {}, b""), (201, {}, b"{}"))
+    with pytest.raises(GitHubAPIError):
+        client(op).create_review_comment("o", "r", 1, commit_id="c", path="a", line=1, body="b")
+    assert len(op.requests) == 1

@@ -64,6 +64,18 @@ class ReviewComment:
     line: int | None
     body: str
     author_is_bot: bool
+    # Needed to edit/delete a comment and to see whether anyone replied to it.
+    id: int = 0
+    in_reply_to_id: int | None = None
+
+
+@dataclass(frozen=True)
+class Review:
+    """An existing review, reduced to what re-run reconciliation needs."""
+
+    id: int
+    body: str
+    author_is_bot: bool
 
 
 @dataclass(frozen=True)
@@ -120,18 +132,23 @@ class GitHubClient:
         return PullFiles(files=files, truncated=full_last_page)
 
     def list_review_comments(self, owner: str, repo: str, number: int) -> list[ReviewComment]:
-        comments: list[ReviewComment] = []
+        data = self._paginate(f"/repos/{owner}/{repo}/pulls/{number}/comments")
+        return [c for c in map(_parse_comment, data) if c is not None]
+
+    def list_reviews(self, owner: str, repo: str, number: int) -> list[Review]:
+        data = self._paginate(f"/repos/{owner}/{repo}/pulls/{number}/reviews")
+        return [r for r in map(_parse_review, data) if r is not None]
+
+    def _paginate(self, path: str) -> list:
+        items: list = []
         for page in range(1, MAX_PAGES + 1):
-            data = self._get_json(
-                f"/repos/{owner}/{repo}/pulls/{number}/comments",
-                {"per_page": PER_PAGE, "page": page},
-            )
+            data = self._get_json(path, {"per_page": PER_PAGE, "page": page})
             if not isinstance(data, list):
-                raise GitHubAPIError("unexpected response shape from the comments endpoint")
-            comments.extend(c for c in map(_parse_comment, data) if c is not None)
+                raise GitHubAPIError("unexpected response shape from a list endpoint")
+            items.extend(data)
             if len(data) < PER_PAGE:
                 break
-        return comments
+        return items
 
     def create_review(
         self,
@@ -147,6 +164,32 @@ class GitHubClient:
         # the merge, and a bot "requesting changes" would need dismissing by hand.
         payload = {"commit_id": commit_id, "body": body, "event": "COMMENT", "comments": comments}
         self._request("POST", f"/repos/{owner}/{repo}/pulls/{number}/reviews", payload=payload)
+
+    def update_review(self, owner: str, repo: str, number: int, review_id: int, body: str) -> None:
+        # The API can only change a review's BODY; inline comments are separate
+        # objects, edited or deleted one by one below.
+        path = f"/repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}"
+        self._request("PUT", path, payload={"body": body})
+
+    def create_review_comment(
+        self, owner: str, repo: str, number: int, *, commit_id: str, path: str, line: int, body: str
+    ) -> None:
+        """Add one comment to the PR (used for findings that appear on a re-run)."""
+        payload = {
+            "commit_id": commit_id,
+            "path": path,
+            "line": line,
+            "side": "RIGHT",
+            "body": body,
+        }
+        self._request("POST", f"/repos/{owner}/{repo}/pulls/{number}/comments", payload=payload)
+
+    def update_review_comment(self, owner: str, repo: str, comment_id: int, body: str) -> None:
+        path = f"/repos/{owner}/{repo}/pulls/comments/{comment_id}"
+        self._request("PATCH", path, payload={"body": body})
+
+    def delete_review_comment(self, owner: str, repo: str, comment_id: int) -> None:
+        self._request("DELETE", f"/repos/{owner}/{repo}/pulls/comments/{comment_id}")
 
     def _get_json(self, path: str, params: Mapping[str, object]):
         return self._request("GET", path, params=params)
@@ -226,10 +269,25 @@ def _parse_comment(entry: object) -> ReviewComment | None:
     user = entry.get("user") if isinstance(entry.get("user"), dict) else {}
     if not isinstance(path, str) or not isinstance(body, str):
         return None
+    reply, comment_id = entry.get("in_reply_to_id"), entry.get("id")
     return ReviewComment(
         path=path,
         line=line if isinstance(line, int) and not isinstance(line, bool) else None,
         body=body,
+        author_is_bot=user.get("type") == "Bot",
+        id=comment_id if isinstance(comment_id, int) else 0,
+        in_reply_to_id=reply if isinstance(reply, int) else None,
+    )
+
+
+def _parse_review(entry: object) -> Review | None:
+    if not isinstance(entry, dict) or not isinstance(entry.get("id"), int):
+        return None
+    user = entry.get("user") if isinstance(entry.get("user"), dict) else {}
+    body = entry.get("body")
+    return Review(
+        id=entry["id"],
+        body=body if isinstance(body, str) else "",
         author_is_bot=user.get("type") == "Bot",
     )
 

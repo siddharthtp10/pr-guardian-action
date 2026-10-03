@@ -89,3 +89,16 @@ def test_hostile_file_names_cannot_forge_commands_or_markdown():
     assert "\n::" not in text
     assert "`" not in safe_name(evil)
     assert all(not line.startswith("::") for line in text.splitlines())
+
+
+def test_exclusion_patterns():
+    files = [f("src/a.tf"), f("tests/fixtures/bad.tf"), f("tests/fixtures/deep/bad.tf")]
+    sel = select_files(files, cfg(paths="!tests/fixtures/**"))
+    assert [t.path for t in sel.targets] == ["src/a.tf"]
+    assert sel.outside_paths == 2
+
+
+def test_include_and_exclude_combine():
+    files = [f("infra/a.tf"), f("infra/skip.tf"), f("other/b.tf")]
+    sel = select_files(files, cfg(paths="infra/**\n!infra/skip.tf"))
+    assert [t.path for t in sel.targets] == ["infra/a.tf"]

@@ -241,14 +241,20 @@ a whole, so a single comment on an invalid line (422) rejects all of them. Every
 finding's line comes from the parsed patch, so that should not happen, but if it
 does I retry once with the findings listed in the review body instead.
 
-**2. How do you stop the bot repeating itself on every push?**
-Each inline comment carries a hidden marker, `<!-- pr-guardian:TF-003 -->`.
-Before posting I list the PR's review comments and skip a finding when a bot
-comment with the same rule already sits on the same path and line. That key
-stays correct across pushes because GitHub moves a comment's `line` with the
-code and sets it to null once that code changes, so an outdated comment does
-not hide a new finding. Only bot comments count, so a human pasting the marker
-can't suppress anything; and the check result never looks at comments at all.
+**2. How do you stop the bot repeating itself on every push - and keep one review up to date?**
+Everything we post carries a hidden marker (`<!-- pr-guardian:TF-003 -->` on
+comments, `<!-- pr-guardian:review -->` on the review). On each run I read what
+is already on the PR and *reconcile*: the review's body is edited in place; an
+open comment with the same `(file, line, rule)` is kept; a finding with no
+comment gets one; a comment whose finding disappeared is deleted, or edited to
+"Resolved" if people replied, so the discussion survives. The key stays correct
+across pushes because GitHub moves a comment's `line` with the code and nulls it
+once that code changes, so an outdated comment is replaced rather than hiding a
+new finding. The planning is a pure function, tested without HTTP, and an
+end-to-end test runs the CLI twice against a stateful fake and asserts the
+second run makes zero writes. Only bot-authored comments and reviews count, so a
+human pasting the marker can't suppress or redirect anything, and the check
+result never looks at comments at all.
 
 **3. Why is the check status separate from the review, and why `COMMENT`?**
 The exit code is what branch protection reads, so it is the gate. Reviews are
@@ -300,4 +306,70 @@ Post one COMMENT review with inline comments (capped, rest in the body), skip
 findings already commented on the same line, fall back to a body-only review on
 422, emit escaped annotations and a Markdown job summary that work on fork PRs,
 and exit 1 when findings meet fail-on. POSTs are never retried.
+```
+
+---
+
+## Stage 4b - Reconciling re-runs (porting onto `main`)
+
+What happened: two sessions built Stages 3 and 4 in parallel. One was merged to
+`main` (PR #2); mine was unpushed. Rather than overwrite what was merged, I
+built on `main` and ported only what it lacked. Worth telling as a story: it is
+a real "two implementations of one feature" integration, resolved by comparing
+behaviour, not by picking a winner wholesale.
+
+What `main` already did better, kept as is: a failed review post is **loud**
+(exit 3, or 1 if findings already fail) because a review that silently never
+appears looks exactly like a clean PR. My version only warned.
+
+What was added: reconcile on re-runs (above), the review body rewritten as
+*current state* so editing it in place leaves one accurate review, step
+outputs (`conclusion`, `findings-count`), `!` exclusions in `paths`, and
+`fail-on: high` in the repo's own smoke job (it previously used `none` because
+its intentionally-bad fixtures failed it; `!tests/fixtures/**` fixes that).
+
+### Five more questions
+
+**1. Why edit the review body instead of posting a new review per push?**
+A busy PR would collect a trail of stale "N new findings" reviews, each one a
+notification. One review that always describes the current state is what a
+reader wants. The API only lets you change a review's *body*; inline comments
+are separate objects, hence the per-comment keep/add/delete.
+
+**2. Why delete a comment whose finding was fixed - and when not to?**
+Leaving it would show a warning about code that no longer exists. But if a
+human replied, deleting destroys the conversation, so the comment is edited to
+"Resolved" instead. The resolved marker deliberately doesn't match the open
+marker's pattern, so a resolved comment stops counting as an open finding.
+
+**3. What if two comments for the same finding exist?**
+The first matching one is kept; extras are deleted (or resolved if replied to).
+This self-heals duplicates left by an interrupted earlier run.
+
+**4. Why can an identical re-run make zero writes?**
+The new body is compared with the existing one; if equal, no update call. No
+notification, no rate-limit use, and nothing for a reviewer to wonder about.
+
+**5. Why must the token be `GITHUB_TOKEN` or an App token?**
+"Ours" is decided by `user.type == "Bot"`. A personal access token posts as a
+`User`, so a re-run wouldn't recognise earlier comments and would duplicate
+them. Documented as unsupported.
+
+### Still not verified against the live API
+
+The `line`-nulling-on-outdated behaviour and the PUT/PATCH/DELETE calls have
+only run against a fake. Manual check on a demo PR: push a second commit that
+doesn't touch the flagged line (expect one comment, review body shows the new
+commit), then one that fixes it (expect the comment removed).
+
+### Suggested commit
+
+```
+feat: reconcile the review on re-runs and add outputs and path exclusions
+
+Update the single review in place, keep comments that still apply, add new
+ones, and delete (or mark resolved) comments for fixed findings. Rank inline
+comments by severity, make identical re-runs write nothing, expose
+conclusion and findings-count as step outputs, add ! exclusions to paths and
+run the repo's own smoke check at fail-on: high.
 ```

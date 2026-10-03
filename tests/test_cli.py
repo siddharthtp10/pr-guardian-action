@@ -55,6 +55,7 @@ import json  # noqa: E402
 
 from pr_guardian.cli import EXIT_API  # noqa: E402
 from pr_guardian.github_api import GitHubAPIError, PullFiles, _parse_file  # noqa: E402
+from tests.fakes import FakeClient  # noqa: E402
 
 
 def event_env(tmp_path, head_repo="o/r"):
@@ -73,27 +74,6 @@ def event_env(tmp_path, head_repo="o/r"):
         "GITHUB_EVENT_PATH": str(p),
         "GITHUB_REPOSITORY": "o/r",
     }
-
-
-class FakeClient:
-    def __init__(self, result, existing=(), post_errors=()):
-        self.result = result
-        self.existing = list(existing)
-        self.post_errors = list(post_errors)  # raised by successive create_review calls
-        self.reviews = []
-
-    def list_pull_files(self, owner, repo, number):
-        if isinstance(self.result, Exception):
-            raise self.result
-        return self.result
-
-    def list_review_comments(self, owner, repo, number):
-        return self.existing
-
-    def create_review(self, owner, repo, number, *, commit_id, body, comments):
-        if self.post_errors:
-            raise self.post_errors.pop(0)
-        self.reviews.append({"commit_id": commit_id, "body": body, "comments": comments})
 
 
 def test_pr_fixture_end_to_end(tmp_path):
@@ -173,7 +153,7 @@ def test_posts_one_review_with_an_inline_comment_and_fails_the_check(tmp_path):
     assert (comment["line"], comment["side"]) == (3, "RIGHT")
     assert comment_marker("TF-003") in comment["body"]
     assert "public-read" not in comment["body"]  # message only, never the diff
-    assert "Review: posted 1 inline comment(s)." in text
+    assert "Review created: 1 comment(s) added" in text
 
 
 def test_annotation_is_an_error_when_failing_and_a_warning_when_advisory(tmp_path):
@@ -254,3 +234,68 @@ def test_job_summary_lists_findings_and_skipped_files(tmp_path):
     assert "**Check failed:** 1 finding(s) at or above `high`" in md
     assert "| high | TF-003 | `infra/main.tf:3` |" in md
     assert "`infra/big.tf`" in md  # skipped files are visible here too
+
+
+# --- Stage 4b: re-run reconciliation, outputs, exclusions ---------------------
+
+
+def test_rerun_on_the_same_pr_makes_no_new_writes(tmp_path):
+    """The headline requirement: same PR, same findings, run twice."""
+    client = FakeClient(fixture_files())
+    run_fixture(tmp_path, client)
+    assert client.writes() == ["create_review"]
+    reviews_after_first = len(client.stored_reviews)
+
+    client.calls.clear()
+    code, text, _, _ = run_fixture(tmp_path, client)
+
+    assert code == EXIT_FINDINGS  # the verdict is recomputed every run
+    assert len(client.stored_reviews) == reviews_after_first == 1
+    assert len(client.open_comments()) == 1
+    assert client.writes() == []  # identical body, nothing new: zero writes
+    assert "Review updated: 0 comment(s) added, 1 kept" in text
+
+
+def test_new_commit_updates_the_review_body_in_place(tmp_path):
+    client = FakeClient(fixture_files())
+    run_fixture(tmp_path, client)
+    client.calls.clear()
+    env = event_env(tmp_path)
+    payload = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text())
+    payload["pull_request"]["head"]["sha"] = "c" * 40
+    Path(env["GITHUB_EVENT_PATH"]).write_text(json.dumps(payload))
+
+    out = io.StringIO()
+    main(env=env, out=out, client_factory=lambda c, x: client)
+
+    assert client.writes() == ["update_review"]  # edited, not a second review
+    assert "ccccccc" in client.stored_reviews[0].body
+    assert len(client.stored_reviews) == 1
+
+
+def test_fixed_finding_removes_its_comment_and_says_so(tmp_path):
+    client = FakeClient(fixture_files())
+    run_fixture(tmp_path, client)
+    assert len(client.open_comments()) == 1
+
+    client.result = PullFiles([], False)  # the developer fixed it
+    code, text, _, _ = run_fixture(tmp_path, client)
+
+    assert code == EXIT_OK
+    assert client.open_comments() == []
+    assert "1 deleted" in text
+    assert "No open findings" in client.stored_reviews[0].body
+
+
+def test_step_outputs_are_written(tmp_path):
+    output = tmp_path / "out.txt"
+    run_fixture(tmp_path, GITHUB_OUTPUT=str(output))
+    assert output.read_text().splitlines() == ["conclusion=failure", "findings-count=1"]
+    output.unlink()
+    run_fixture(tmp_path, FakeClient(PullFiles([], False)), GITHUB_OUTPUT=str(output))
+    assert output.read_text().splitlines() == ["conclusion=success", "findings-count=0"]
+
+
+def test_paths_exclusion_removes_files_from_review(tmp_path):
+    code, text, client, _ = run_fixture(tmp_path, PRG_PATHS="!infra/**")
+    assert code == EXIT_OK and client.reviews == []

@@ -111,6 +111,11 @@ def main(
 
     failed = any(meets_threshold(f.severity, config.fail_on) for f in findings)
     exit_code = EXIT_FINDINGS if failed else EXIT_OK
+    # Step outputs let a later workflow step react (e.g. label the PR) without
+    # parsing logs. Set before posting so they exist even if posting fails.
+    _write_outputs(
+        env, {"conclusion": "failure" if failed else "success", "findings-count": len(findings)}
+    )
 
     if config.dry_run:
         print("Review: dry-run, not posting.", file=out)
@@ -127,6 +132,22 @@ def main(
             print(f"::error title=Could not post review::{message}", file=out)
             return exit_code or EXIT_API
     return exit_code
+
+
+def _write_outputs(env: Mapping[str, str], outputs: Mapping[str, str | int]) -> None:
+    """Append `name=value` lines to $GITHUB_OUTPUT. Values are only ever numbers
+    and fixed words; the newline check is defence in depth against output injection."""
+    path = env.get("GITHUB_OUTPUT", "")
+    if not path:
+        return
+    lines = []
+    for name, value in outputs.items():
+        text = str(value)
+        if "\n" in text or "\r" in text:
+            raise ValueError("output values must be single-line")
+        lines.append(f"{name}={text}\n")
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.writelines(lines)
 
 
 def _write_summary(env: Mapping[str, str], markdown: str, out: TextIO) -> None:

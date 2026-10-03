@@ -65,6 +65,18 @@ class Selection:
     api_truncated: bool = False
 
 
+def path_allowed(path: str, patterns: tuple[str, ...]) -> bool:
+    """``paths`` semantics: a file must match an include (if any) and no ``!`` exclude.
+
+    Only excludes given = everything except those. Nothing given = everything.
+    """
+    excludes = [p[1:].strip() for p in patterns if p.startswith("!")]
+    includes = [p for p in patterns if not p.startswith("!")]
+    if any(glob_match(p, path) for p in excludes):
+        return False
+    return not includes or any(glob_match(p, path) for p in includes)
+
+
 def select_files(
     files: list[ChangedFile],
     config: Config,
@@ -78,7 +90,7 @@ def select_files(
         if f.status == "removed":
             sel.removed += 1  # nothing in the new tree to comment on
             continue
-        if config.paths and not any(glob_match(p, f.filename) for p in config.paths):
+        if not path_allowed(f.filename, config.paths):
             sel.outside_paths += 1
             continue
         kind = classify(f.filename)

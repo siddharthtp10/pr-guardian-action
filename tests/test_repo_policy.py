@@ -136,3 +136,35 @@ def test_runtime_dependencies_are_exactly_pinned_and_consistent():
     ]
     assert sorted(declared) == sorted(lines)
     assert all(re.fullmatch(r"[A-Za-z0-9_.-]+==[0-9][0-9A-Za-z.]*", d) for d in declared)
+
+
+def test_repo_passes_its_own_review():
+    """Dogfood: real files from this repo must not trigger any rule.
+
+    (tests/fixtures is excluded - it is intentionally bad.) Doubles as a
+    false-positive check on real-world YAML.
+    """
+    from pr_guardian.engine import evaluate
+    from pr_guardian.filetypes import classify
+    from pr_guardian.rules import load_rules
+    from pr_guardian.selection import ReviewTarget
+    from tests.test_engine import added_patch
+
+    targets = []
+    for path in ROOT.rglob("*"):
+        rel = path.relative_to(ROOT).as_posix()
+        if not path.is_file() or rel.startswith(("tests/fixtures/", ".git/", ".venv/")):
+            continue
+        kind = classify(rel)
+        if kind:
+            targets.append(ReviewTarget(rel, kind, "added", added_patch(path.read_text())))
+    assert targets, "expected at least the workflow, action.yml and the policy file"
+    assert evaluate(targets, load_rules()) == []
+
+
+def test_action_declares_outputs_wired_to_the_run_step():
+    action = load(ROOT / "action.yml")
+    step = next(s for s in action["runs"]["steps"] if s.get("name") == "Run PR Guardian")
+    assert step["id"] == "guardian"
+    for name, spec in action["outputs"].items():
+        assert spec["value"] == "${{ steps.guardian.outputs." + name + " }}"

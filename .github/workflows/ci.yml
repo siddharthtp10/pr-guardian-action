@@ -62,7 +62,7 @@ jobs:
       - uses: ./
         with:
           dry-run: "true"
-          # This repo's test fixtures are deliberately bad Terraform/K8s files,
-          # so any PR touching them has findings. The smoke test checks that
-          # the Action runs end to end, not that this repo is clean.
-          fail-on: none
+          fail-on: high
+          # tests/fixtures holds INTENTIONALLY bad files (they are the rule
+          # tests), so exclude them: the repo's own code must pass its own review.
+          paths: "!tests/fixtures/**"
