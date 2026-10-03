@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    spec:
+      containers:
+        - name: web # EXPECT:K8S-001
+          image: nginx:latest # EXPECT:K8S-004
+          securityContext:
+            privileged: true # EXPECT:K8S-002
+            runAsUser: 0 # EXPECT:K8S-003
+        - name: sidecar # EXPECT:K8S-001
+          image: busybox # EXPECT:K8S-004
+          securityContext:
+            runAsNonRoot: false # EXPECT:K8S-003
+          resources:
+            requests:
+              cpu: 10m
+        - name: ok
+          image: busybox:1.36.1
+          resources:
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: data

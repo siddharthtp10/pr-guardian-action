@@ -1,0 +1,24 @@
+name: CI
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567 # v4
+      - uses: some-org/deploy@0123456789abcdef0123456789abcdef01234567 # v2
+      - uses: 'quoted-org/thing@0123456789abcdef0123456789abcdef01234567'
+      - uses: ./.github/actions/local
+      - uses: docker://alpine:3.20
+      # - uses: commented-out/action@v1
+      - name: "Safe - untrusted value goes through env, not the script text"
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: echo "$TITLE"
+      - name: Trusted, non-attacker-controlled expressions are fine
+        run: echo "PR number ${{ github.event.pull_request.number }} on ${{ github.sha }}"
+      - name: Untrusted value outside a script is not injectable
+        uses: some-org/label@0123456789abcdef0123456789abcdef01234567
+        with:
+          title: ${{ github.event.pull_request.title }}

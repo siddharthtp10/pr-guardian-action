@@ -8,6 +8,8 @@ comments in later stages.
 
 from __future__ import annotations
 
+from pr_guardian.config import SEVERITIES
+from pr_guardian.engine import Finding
 from pr_guardian.selection import Selection
 
 _MAX_NAME = 200
@@ -43,4 +45,17 @@ def render_selection(sel: Selection) -> str:
         out.append(
             "WARNING: this PR has 3000+ files, GitHub's API limit. Some files could not be listed."
         )
+    return "\n".join(out)
+
+
+def render_findings(findings: list[Finding]) -> str:
+    if not findings:
+        return "Findings: none."
+    counts = {sev: sum(1 for f in findings if f.severity == sev) for sev in SEVERITIES}
+    summary = ", ".join(f"{counts[s]} {s}" for s in reversed(SEVERITIES) if counts[s])
+    out = [f"Findings: {len(findings)} ({summary})"]
+    for f in findings:
+        # f.message comes from the policy file, never from the diff.
+        out.append(f"  - [{f.severity.upper()}] {f.rule_id} {safe_name(f.path)}:{f.line}")
+        out.append(f"      {f.message}")
     return "\n".join(out)

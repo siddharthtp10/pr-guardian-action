@@ -1,0 +1,25 @@
+name: CI
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4 # EXPECT:GHA-002
+      - uses: some-org/deploy@v2 # EXPECT:GHA-001
+      - uses: some-org/other@main # EXPECT:GHA-001
+      - uses: "quoted-org/thing@v1" # EXPECT:GHA-001
+      - uses: some-org/short@abc1234 # EXPECT:GHA-001
+      - uses: some-org/reusable/.github/workflows/x.yml@v3 # EXPECT:GHA-001
+      - name: Greet the PR
+        run: echo "${{ github.event.pull_request.title }}" # EXPECT:GHA-003
+      - name: Multi-line script
+        run: |
+          echo "building ${{ github.head_ref }}" # EXPECT:GHA-003
+          echo "safe line"
+      - name: Script action
+        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567 # v7
+        with:
+          script: |
+            const t = "${{ github.event.comment.body }}"; // EXPECT:GHA-003

@@ -145,3 +145,59 @@ def test_real_opener_does_not_follow_redirects(monkeypatch):
     handler = _NoRedirect()
     req = urllib.request.Request(API, headers={"Authorization": "Bearer x"})
     assert handler.redirect_request(req, None, 301, "Moved", {}, "https://evil.example") is None
+
+
+# --- Stage 4: review endpoints -------------------------------------------------
+
+
+def comment(path="a.tf", line=3, body="b", user_type="Bot"):
+    return {"path": path, "line": line, "body": body, "user": {"type": user_type}}
+
+
+def test_list_review_comments_paginates_and_parses():
+    full = ok([comment(line=i) for i in range(1, PER_PAGE + 1)])
+    op = FakeOpener(full, ok([comment(line=None, user_type="User")]))
+    result = client(op).list_review_comments("o", "r", 7)
+    assert len(result) == PER_PAGE + 1
+    assert op.requests[0].full_url == f"{API}/repos/o/r/pulls/7/comments?per_page=100&page=1"
+    last = result[-1]
+    assert last.line is None and not last.author_is_bot
+
+
+def test_malformed_comments_are_skipped_not_fatal():
+    op = FakeOpener(ok(["junk", {"path": 1}, comment(line=True)]))
+    [only] = client(op).list_review_comments("o", "r", 7)
+    assert only.line is None  # a JSON boolean is not a line number
+
+
+def test_create_review_posts_json_once():
+    op = FakeOpener((200, {}, b"{}"))
+    comments = [{"path": "a.tf", "line": 3, "side": "RIGHT", "body": "x"}]
+    client(op).create_review("o", "r", 7, commit_id="c" * 40, body="hi", comments=comments)
+    req = op.requests[0]
+    assert req.get_method() == "POST"
+    assert req.full_url == f"{API}/repos/o/r/pulls/7/reviews"
+    assert req.get_header("Content-type") == "application/json"
+    sent = json.loads(req.data)
+    assert sent == {"commit_id": "c" * 40, "body": "hi", "event": "COMMENT", "comments": comments}
+
+
+def test_create_review_is_never_retried():
+    # A 5xx or timeout may come after GitHub stored the review; retrying
+    # would post it twice.
+    sleeps = []
+    op = FakeOpener((502, {}, b""), ok([]))
+    with pytest.raises(GitHubAPIError) as err:
+        client(op, sleeps).create_review("o", "r", 7, commit_id="c" * 40, body="", comments=[])
+    assert err.value.status == 502
+    assert len(op.requests) == 1 and sleeps == []
+    op = FakeOpener(TimeoutError("slow"))
+    with pytest.raises(GitHubAPIError):
+        client(op).create_review("o", "r", 7, commit_id="c" * 40, body="", comments=[])
+
+
+def test_422_is_explained():
+    op = FakeOpener((422, {}, b'{"message": "Unprocessable"}'))
+    with pytest.raises(GitHubAPIError) as err:
+        client(op).create_review("o", "r", 7, commit_id="c" * 40, body="", comments=[])
+    assert err.value.status == 422 and "outside the diff" in str(err.value)

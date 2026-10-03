@@ -1,8 +1,8 @@
 """Minimal GitHub REST client (standard library only).
 
 WHY not `requests`/PyGithub: zero runtime dependencies keeps the supply-chain
-surface (and the Action's start-up time) at nothing. We need exactly one GET
-endpoint in this stage.
+surface (and the Action's start-up time) at nothing. We need three endpoints:
+list PR files, list existing review comments, and create a review.
 
 Security properties, each covered by a test:
 - Redirects are refused. Python's urllib would happily forward the
@@ -10,6 +10,8 @@ Security properties, each covered by a test:
 - We build every URL ourselves and never follow ``Link`` headers from the
   response, so the token can only be sent to the configured API host.
 - Error messages never include the token.
+- POST is never retried: a timeout after GitHub accepted the review would
+  otherwise post it twice. Re-runs are de-duplicated instead (see publish.py).
 """
 
 from __future__ import annotations
@@ -50,6 +52,18 @@ class ChangedFile:
     additions: int
     deletions: int
     previous_filename: str | None = None
+
+
+@dataclass(frozen=True)
+class ReviewComment:
+    """An existing inline comment, reduced to what de-duplication needs."""
+
+    path: str
+    # GitHub moves `line` to follow the code on newer commits and sets it to
+    # null when the commented code changed ("outdated"); we keep that as None.
+    line: int | None
+    body: str
+    author_is_bot: bool
 
 
 @dataclass(frozen=True)
@@ -105,39 +119,84 @@ class GitHubClient:
                 break
         return PullFiles(files=files, truncated=full_last_page)
 
+    def list_review_comments(self, owner: str, repo: str, number: int) -> list[ReviewComment]:
+        comments: list[ReviewComment] = []
+        for page in range(1, MAX_PAGES + 1):
+            data = self._get_json(
+                f"/repos/{owner}/{repo}/pulls/{number}/comments",
+                {"per_page": PER_PAGE, "page": page},
+            )
+            if not isinstance(data, list):
+                raise GitHubAPIError("unexpected response shape from the comments endpoint")
+            comments.extend(c for c in map(_parse_comment, data) if c is not None)
+            if len(data) < PER_PAGE:
+                break
+        return comments
+
+    def create_review(
+        self,
+        owner: str,
+        repo: str,
+        number: int,
+        *,
+        commit_id: str,
+        body: str,
+        comments: list[dict[str, object]],
+    ) -> None:
+        # event=COMMENT, never REQUEST_CHANGES: the check status is what gates
+        # the merge, and a bot "requesting changes" would need dismissing by hand.
+        payload = {"commit_id": commit_id, "body": body, "event": "COMMENT", "comments": comments}
+        self._request("POST", f"/repos/{owner}/{repo}/pulls/{number}/reviews", payload=payload)
+
     def _get_json(self, path: str, params: Mapping[str, object]):
-        url = f"{self._base}{path}?{urllib.parse.urlencode(params)}"
+        return self._request("GET", path, params=params)
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        params: Mapping[str, object] | None = None,
+        payload: object = None,
+    ):
+        url = f"{self._base}{path}"
+        if params:
+            url += f"?{urllib.parse.urlencode(params)}"
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": API_VERSION,
+            "User-Agent": f"pr-guardian-action/{__version__}",
+        }
+        data = None
+        if payload is not None:
+            data = json.dumps(payload).encode()
+            headers["Content-Type"] = "application/json"
         request = urllib.request.Request(  # noqa: S310 - https enforced in __init__
-            url,
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": API_VERSION,
-                "User-Agent": f"pr-guardian-action/{__version__}",
-            },
+            url, data=data, headers=headers, method=method
         )
-        status, headers, body = 0, {}, b""
-        for attempt in range(1, ATTEMPTS + 1):
+        attempts = ATTEMPTS if method == "GET" else 1
+        status, headers_in, body = 0, {}, b""
+        for attempt in range(1, attempts + 1):
             try:
-                status, headers, body = self._opener(request)
+                status, headers_in, body = self._opener(request)
             except OSError as exc:  # DNS failure, connection reset, timeout
-                if attempt == ATTEMPTS:
+                if attempt == attempts:
                     raise GitHubAPIError(f"network error talking to GitHub: {exc}") from exc
                 self._sleep(2 ** (attempt - 1))
                 continue
-            if status >= 500 and attempt < ATTEMPTS:
+            if status >= 500 and attempt < attempts:
                 self._sleep(2 ** (attempt - 1))  # 1s, 2s: GitHub 5xx are usually transient
                 continue
             break
 
         if len(body) > MAX_BODY_BYTES:
             raise GitHubAPIError("GitHub response exceeded the size limit")
-        if status == 200:
+        if 200 <= status < 300:
             try:
-                return json.loads(body)
+                return json.loads(body) if body else None
             except ValueError as exc:
                 raise GitHubAPIError("GitHub returned invalid JSON") from exc
-        raise _error_for(status, headers, body)
+        raise _error_for(status, headers_in, body)
 
 
 def _parse_file(entry: object) -> ChangedFile:
@@ -158,6 +217,23 @@ def _parse_file(entry: object) -> ChangedFile:
     )
 
 
+def _parse_comment(entry: object) -> ReviewComment | None:
+    # Comments are only used to avoid re-posting, so a malformed one is skipped
+    # rather than failing the run.
+    if not isinstance(entry, dict):
+        return None
+    path, body, line = entry.get("path"), entry.get("body"), entry.get("line")
+    user = entry.get("user") if isinstance(entry.get("user"), dict) else {}
+    if not isinstance(path, str) or not isinstance(body, str):
+        return None
+    return ReviewComment(
+        path=path,
+        line=line if isinstance(line, int) and not isinstance(line, bool) else None,
+        body=body,
+        author_is_bot=user.get("type") == "Bot",
+    )
+
+
 def _error_for(status: int, headers: Mapping[str, str], body: bytes) -> GitHubAPIError:
     if status == 401:
         return GitHubAPIError("GitHub rejected the token (bad or expired)", status)
@@ -166,7 +242,9 @@ def _error_for(status: int, headers: Mapping[str, str], body: bytes) -> GitHubAP
         return GitHubAPIError(f"GitHub rate limit exhausted (resets at epoch {reset})", status)
     if status == 403:
         return GitHubAPIError(
-            "GitHub denied access: the token needs at least 'pull-requests: read'", status
+            "GitHub denied access: reading needs 'pull-requests: read', posting needs "
+            "'pull-requests: write'",
+            status,
         )
     if status == 404:
         return GitHubAPIError(
@@ -176,6 +254,12 @@ def _error_for(status: int, headers: Mapping[str, str], body: bytes) -> GitHubAP
         return GitHubAPIError(
             "GitHub redirected the request; refusing to forward credentials "
             "(was the repository renamed or transferred?)",
+            status,
+        )
+    if status == 422:
+        return GitHubAPIError(
+            "GitHub rejected the request as invalid (422), e.g. a comment on a line "
+            "outside the diff or a stale commit",
             status,
         )
     try:
