@@ -129,17 +129,25 @@ def _line_matches(rule: Rule, texts: list[str], i: int) -> bool:
         return False
     if rule.exclude and rule.exclude.search(text):
         return False
-    return not (rule.within and not _inside(texts, i, rule.within))
+    if not rule.within:
+        return True
+    opener = _enclosing(texts, i, rule.within)
+    if opener is None:
+        return False
+    if rule.block_requires or rule.block_forbids:
+        return _block_conditions_hold(rule, texts, opener)
+    return True
 
 
-def _inside(texts: list[str], i: int, within) -> bool:
-    """Is line i (or a visible ancestor of it, found by indentation) matching `within`?
+def _enclosing(texts: list[str], i: int, within) -> int | None:
+    """Index of the nearest line (i itself, or a visible ancestor found by indentation)
+    that matches `within`; None if there is none.
 
     Walk upward, each time looking only at lines indented LESS than the
     current threshold: those are the enclosing blocks, nearest first.
     """
     if within.search(texts[i]):
-        return True
+        return i
     threshold = _indent(texts[i])
     for j in range(i - 1, -1, -1):
         text = texts[j]
@@ -148,11 +156,41 @@ def _inside(texts: list[str], i: int, within) -> bool:
         indent = _indent(text)
         if indent < threshold:
             if within.search(text):
-                return True
+                return j
             threshold = indent
             if threshold == 0:
                 break
-    return False
+    return None
+
+
+def _block_body(texts: list[str], opener: int) -> list[str] | None:
+    """The non-comment lines between a block's opener and its closing line.
+
+    The block ends at the first later line indented the same as the opener or
+    less (for Terraform that is the closing brace). If that line is not visible
+    in the diff we do not know the block's full contents, so return None.
+    """
+    opener_indent = _indent(texts[opener])
+    for k in range(opener + 1, len(texts)):
+        if _is_blank_or_comment(texts[k]):
+            continue
+        if _indent(texts[k]) <= opener_indent:
+            return [t for t in texts[opener + 1 : k] if not _is_blank_or_comment(t)]
+    return None
+
+
+def _block_conditions_hold(rule: Rule, texts: list[str], opener: int) -> bool:
+    """`block_requires` / `block_forbids`: a sibling-line check inside the enclosing block.
+
+    Both need the WHOLE block to be visible: "requires" cannot be confirmed and
+    "forbids" cannot be ruled out from a fragment. Unknown means silence, never a guess.
+    """
+    body = _block_body(texts, opener)
+    if body is None:
+        return False
+    if rule.block_requires and not any(rule.block_requires.search(t) for t in body):
+        return False
+    return not (rule.block_forbids and any(rule.block_forbids.search(t) for t in body))
 
 
 # --- "YAML list item is missing X" rules ------------------------------------

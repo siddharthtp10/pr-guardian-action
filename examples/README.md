@@ -5,10 +5,10 @@ PR Guardian has something to find. Never copy them into real infrastructure.
 
 | File | What it shows | Rules it should trigger |
 |---|---|---|
-| [`terraform/main.tf`](terraform/main.tf) | Security group open to the internet on ingress (and a harmless open *egress*, which must not be flagged), open ingress rule resource, public S3 ACL, Block Public Access switched off, `"*"` IAM actions, a hard-coded password | `TF-001` `TF-002` `TF-003` `TF-004` `TF-005` `SEC-003` |
-| [`kubernetes/deployment.yaml`](kubernetes/deployment.yaml) | A container with no resource limits, `:latest` image, privileged, running as root | `K8S-001` `K8S-002` `K8S-003` `K8S-004` |
-| [`workflows/pr-guardian-demo-bad-workflow.yml`](workflows/pr-guardian-demo-bad-workflow.yml) | Unpinned third-party and first-party actions, an attacker-controlled value expanded inside `run:` | `GHA-001` `GHA-002` `GHA-003` |
-| [`docker/Dockerfile`](docker/Dockerfile) | `FROM ...:latest`, running as root | `DOCKER-001` `DOCKER-002` |
+| [`terraform/main.tf`](terraform/main.tf) | SSH open to the internet (high) next to public HTTPS (only low) and a harmless open *egress* that must not be flagged; open ingress rule resource; public S3 ACL; Block Public Access off; `"*"` IAM actions; a hard-coded password; a public database without encryption; an open EKS endpoint; IMDSv1; mutable ECR tags | `TF-001` `TF-002` `TF-003` `TF-004` `TF-005` `TF-006` `TF-007` `TF-008` `TF-009` `TF-010` `TF-011` `SEC-003` |
+| [`kubernetes/deployment.yaml`](kubernetes/deployment.yaml) | A container with no resource limits, `:latest` image, privileged, running as root, host networking, privilege escalation allowed | `K8S-001` `K8S-002` `K8S-003` `K8S-004` `K8S-005` `K8S-006` |
+| [`workflows/pr-guardian-demo-bad-workflow.yml`](workflows/pr-guardian-demo-bad-workflow.yml) | Unpinned third-party and first-party actions, an attacker-controlled value expanded inside `run:`, `permissions: write-all` | `GHA-001` `GHA-002` `GHA-003` `GHA-004` |
+| [`docker/Dockerfile`](docker/Dockerfile) | `FROM ...:latest`, running as root, a script piped into a shell, an unquoted password in `ENV` | `DOCKER-001` `DOCKER-002` `DOCKER-003` `SEC-003` |
 
 The workflow example is **inert**: it can only be started by hand
 (`workflow_dispatch`) and its only job has `if: false`, so putting it on a demo

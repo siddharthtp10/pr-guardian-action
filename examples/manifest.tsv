@@ -1,5 +1,5 @@
 # source (under examples/)	destination in the demo branch	rules that must fire
-terraform/main.tf	demo-pr/terraform/main.tf	TF-001,TF-002,TF-003,TF-004,TF-005,SEC-003
-kubernetes/deployment.yaml	demo-pr/kubernetes/deployment.yaml	K8S-001,K8S-002,K8S-003,K8S-004
-workflows/pr-guardian-demo-bad-workflow.yml	.github/workflows/pr-guardian-demo-bad-workflow.yml	GHA-001,GHA-002,GHA-003
-docker/Dockerfile	demo-pr/docker/Dockerfile	DOCKER-001,DOCKER-002
+terraform/main.tf	demo-pr/terraform/main.tf	TF-001,TF-002,TF-003,TF-004,TF-005,TF-006,TF-007,TF-008,TF-009,TF-010,TF-011,SEC-003
+kubernetes/deployment.yaml	demo-pr/kubernetes/deployment.yaml	K8S-001,K8S-002,K8S-003,K8S-004,K8S-005,K8S-006
+workflows/pr-guardian-demo-bad-workflow.yml	.github/workflows/pr-guardian-demo-bad-workflow.yml	GHA-001,GHA-002,GHA-003,GHA-004
+docker/Dockerfile	demo-pr/docker/Dockerfile	DOCKER-001,DOCKER-002,DOCKER-003,SEC-003

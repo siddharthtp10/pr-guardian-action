@@ -21,7 +21,7 @@ def policy(*rules):
 
 def test_default_policy_loads():
     rules = load_rules()
-    assert 12 <= len(rules) <= 20
+    assert 12 <= len(rules) <= 40
     assert len({r.id for r in rules}) == len(rules)
     assert all(r.severity in SEVERITIES for r in rules)
 
@@ -108,3 +108,40 @@ def test_unreadable_policy(tmp_path):
 
 def test_policy_file_is_in_the_package_data():
     assert DEFAULT_POLICY.is_file()
+
+
+def test_block_conditions_are_accepted_when_a_within_pattern_is_present():
+    rule = parse_rules(
+        policy({**GOOD, "within": r"^\s*ingress", "block_requires": "22", "block_forbids": "443"})
+    )[0]
+    assert rule.block_requires.search("22") and rule.block_forbids.search("443")
+
+
+@pytest.mark.parametrize("key", ["block_requires", "block_forbids"])
+def test_block_conditions_without_within_are_rejected(key):
+    with pytest.raises(RuleError, match="need a 'within' pattern"):
+        parse_rules(policy({**GOOD, key: "22"}))
+
+
+def test_block_conditions_are_rejected_on_non_line_rules():
+    bad = {
+        **GOOD,
+        "type": "yaml_item_missing",
+        "required": "x",
+        "within": "a",
+        "block_requires": "b",
+    }
+    with pytest.raises(RuleError, match="only valid for line rules"):
+        parse_rules(policy(bad))
+
+
+@pytest.mark.parametrize("key", ["block_requires", "block_forbids"])
+def test_block_condition_regexes_are_validated_like_any_other(key):
+    with pytest.raises(RuleError, match=f"{key} is not a valid regex"):
+        parse_rules(policy({**GOOD, "within": "a", key: "("}))
+
+
+def test_the_default_policy_only_uses_block_conditions_on_rules_that_have_within():
+    for rule in load_rules():
+        if rule.block_requires or rule.block_forbids:
+            assert rule.within is not None, rule.id

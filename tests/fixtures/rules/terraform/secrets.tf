@@ -12,6 +12,9 @@ locals {
   secret_name     = "prod/db/credentials"
   doc_key         = "AKIAIOSFODNN7EXAMPLE"
   masked_password = "************"
+  from_random     = random_password.db1.result
+  from_module     = module.auth.token2
+  from_data       = data.aws_ssm_parameter.pw2.value
 }
 
 # Secrets in comments still leak, so comments are scanned: @@PEM@@ EXPECT:SEC-002

@@ -5,6 +5,7 @@ metadata:
 spec:
   template:
     spec:
+      hostNetwork: false
       securityContext:
         runAsNonRoot: true
       containers:
@@ -12,6 +13,7 @@ spec:
           image: ghcr.io/example-org/web:1.4.2
           securityContext:
             privileged: false
+            allowPrivilegeEscalation: false
             runAsUser: 10001
           resources:
             limits:

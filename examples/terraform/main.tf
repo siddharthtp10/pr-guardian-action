@@ -5,10 +5,20 @@ resource "aws_security_group" "web" {
   name        = "web"
   description = "Web tier"
 
+  # Public HTTPS is common for a load balancer: only a LOW finding (TF-006).
   ingress {
     description = "HTTPS from anywhere"
     from_port   = 443
     to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # SSH from anywhere is an administrative port: HIGH (TF-001).
+  ingress {
+    description = "SSH from anywhere"
+    from_port   = 22
+    to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -52,4 +62,35 @@ data "aws_iam_policy_document" "deploy" {
 
 locals {
   db_password = "hunter2hunter2"
+}
+
+resource "aws_db_instance" "main" {
+  identifier          = "main"
+  engine              = "postgres"
+  publicly_accessible = true
+  storage_encrypted   = false
+}
+
+resource "aws_eks_cluster" "main" {
+  name     = "main"
+  role_arn = aws_iam_role.eks.arn
+
+  vpc_config {
+    subnet_ids          = var.subnet_ids
+    public_access_cidrs = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_instance" "web" {
+  ami           = "ami-0abcdef1234567890"
+  instance_type = "t3.micro"
+
+  metadata_options {
+    http_tokens = "optional"
+  }
+}
+
+resource "aws_ecr_repository" "app" {
+  name                 = "app"
+  image_tag_mutability = "MUTABLE"
 }

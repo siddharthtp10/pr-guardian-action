@@ -22,10 +22,18 @@ First release.
 - Diff handling through the GitHub API: pagination, size and file-count caps, a
   fail-closed unified-diff parser that maps every finding to a valid comment
   line, and a visible "NOT reviewed" report for anything skipped.
-- Rules engine with 17 generic rules (unpinned Actions, script injection,
-  internet-open ingress, public S3, wildcard IAM, hard-coded secrets, missing
-  resource limits, privileged or root containers, mutable image tags). Rules are
-  validated YAML, flag added lines only, and never echo the matched text.
+- Rules engine with 27 generic rules (unpinned Actions, script injection,
+  `write-all` permissions, internet-open ingress, public S3 and databases,
+  disabled encryption, open EKS endpoint, IMDSv1, mutable image tags, wildcard
+  IAM, hard-coded secrets, missing resource limits, privileged or root
+  containers, host namespaces, piped install scripts). Rules are validated YAML,
+  flag added lines only, and never echo the matched text.
+- Port-aware ingress rules: administrative, database and all-ports exposure is
+  `high`; other public ports are only `low`. Rules can inspect other lines of
+  the same block (`block_requires` / `block_forbids`) and stay silent when the
+  block is not fully visible in the diff.
+- Secret detection (SEC-003) also finds unquoted values (`password: ...`,
+  `ENV DB_PASSWORD=...`), while ignoring references and prose.
 - One inline review per pull request, reconciled on re-runs: the body is updated
   in place, still-valid comments are kept, fixed findings are removed or marked
   resolved, and an identical re-run makes no writes. Job summary, annotations and

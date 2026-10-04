@@ -29,6 +29,8 @@ _ALLOWED_KEYS = {
     "type",
     "exclude",
     "within",
+    "block_requires",
+    "block_forbids",
     "required",
     "scan_comments",
 }
@@ -57,6 +59,8 @@ class Rule:
     type: RuleType = RuleType.LINE
     exclude: re.Pattern[str] | None = None
     within: re.Pattern[str] | None = None
+    block_requires: re.Pattern[str] | None = None
+    block_forbids: re.Pattern[str] | None = None
     required: re.Pattern[str] | None = None
     scan_comments: bool = False
 
@@ -128,12 +132,19 @@ def _parse_one(entry: object, label: str, problems: list[str]) -> Rule | None:
     pattern = _compile(entry, "pattern", label, problems, required=True)
     exclude = _compile(entry, "exclude", label, problems)
     within = _compile(entry, "within", label, problems)
+    block_requires = _compile(entry, "block_requires", label, problems)
+    block_forbids = _compile(entry, "block_forbids", label, problems)
     required = _compile(entry, "required", label, problems)
 
     if rule_type is RuleType.YAML_ITEM_MISSING and required is None:
         problems.append(f"{label}: yaml_item_missing rules need 'required'")
     if rule_type is RuleType.LINE and required is not None:
         problems.append(f"{label}: 'required' is only valid for yaml_item_missing")
+    if (block_requires or block_forbids) and within is None:
+        # The block is the one found by `within`; without it there is nothing to inspect.
+        problems.append(f"{label}: block_requires/block_forbids need a 'within' pattern")
+    if (block_requires or block_forbids) and rule_type is not RuleType.LINE:
+        problems.append(f"{label}: block_requires/block_forbids are only valid for line rules")
     scan_comments = entry.get("scan_comments", False)
     if not isinstance(scan_comments, bool):
         problems.append(f"{label}: scan_comments must be true or false")
@@ -149,6 +160,8 @@ def _parse_one(entry: object, label: str, problems: list[str]) -> Rule | None:
         type=rule_type,
         exclude=exclude,
         within=within,
+        block_requires=block_requires,
+        block_forbids=block_forbids,
         required=required,
         scan_comments=scan_comments is True,
     )

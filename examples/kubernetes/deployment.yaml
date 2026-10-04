@@ -13,6 +13,7 @@ spec:
       labels:
         app: web
     spec:
+      hostNetwork: true
       containers:
         - name: web
           image: nginx:latest
@@ -20,6 +21,7 @@ spec:
             - containerPort: 80
           securityContext:
             privileged: true
+            allowPrivilegeEscalation: true
             runAsUser: 0
       volumes:
         - name: data
