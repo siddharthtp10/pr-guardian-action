@@ -11,6 +11,11 @@
 #   exclude       optional regex; a line matching it is not reported
 #   within        optional regex; the line (or a visible enclosing block opener,
 #                 found by indentation) must match it
+#   block_requires  optional regex (needs `within`): some other line of that
+#                 enclosing block must match it. The whole block must be visible
+#                 in the diff, otherwise the rule stays silent (no guessing).
+#   block_forbids   optional regex (needs `within`): NO line of that enclosing
+#                 block may match it. Same visibility requirement.
 #   scan_comments optional, default false; true = also scan comment-only lines
 #   type          line (default) | yaml_item_missing
 #   required      yaml_item_missing only: regex that must appear in the list item
@@ -54,16 +59,31 @@ rules:
     pattern: |-
       \$\{\{\s*(?:github\.head_ref|github\.event\.(?:issue|pull_request|comment|review|review_comment|discussion|head_commit|pages|commits)[^}]*?\.(?:title|body|ref|label|message|name|email|page_name|head_ref)\b)
 
+  - id: GHA-004
+    severity: high
+    file_types: [github-actions]
+    message: >-
+      Workflow or job grants the token every permission (permissions: write-all).
+      A compromised step or action could then write to the repository, packages
+      and more. Declare only the scopes the job needs, for example
+      `contents: read`.
+    pattern: |-
+      ^\s*permissions:\s*write-all\b
+
   # --- Terraform -----------------------------------------------------------
   - id: TF-001
     severity: high
     file_types: [terraform]
     message: >-
-      Ingress rule is open to the whole internet (0.0.0.0/0 or ::/0). Restrict
-      the CIDR to the networks that need access, or put the service behind a
-      load balancer/WAF. Egress blocks are intentionally not flagged.
+      Ingress rule exposes an administrative or database port (SSH, RDP, common
+      database ports) or ALL ports to the whole internet (0.0.0.0/0 or ::/0).
+      Restrict the CIDR to the networks that need access (a VPN, a bastion, a
+      private subnet). Egress blocks are intentionally not flagged. Only
+      reported when the whole rule block is visible in the diff.
     within: |-
       ^\s*ingress\s*(?:\{|=)
+    block_requires: |-
+      \b(?:from_port|to_port)\s*=\s*(?:22|23|3389|5900|3306|5432|1433|1521|6379|9200|11211|27017|2375)\b|\b(?:ip_)?protocol\s*=\s*"-1"|\bto_port\s*=\s*65535\b
     pattern: |-
       ["'](?:0\.0\.0\.0/0|::/0)["']
 
@@ -71,10 +91,14 @@ rules:
     severity: high
     file_types: [terraform]
     message: >-
-      Security group ingress rule is open to the whole internet. Restrict the
-      CIDR to the networks that need access.
+      Security group ingress rule exposes an administrative or database port, or
+      ALL ports, to the whole internet. Restrict the CIDR to the networks that
+      need access. Only reported when the whole resource block is visible in the
+      diff.
     within: |-
       ^\s*resource\s+"aws_vpc_security_group_ingress_rule"
+    block_requires: |-
+      \b(?:from_port|to_port)\s*=\s*(?:22|23|3389|5900|3306|5432|1433|1521|6379|9200|11211|27017|2375)\b|\b(?:ip_)?protocol\s*=\s*"-1"|\bto_port\s*=\s*65535\b
     pattern: |-
       \bcidr_ipv[46]\s*=\s*["'](?:0\.0\.0\.0/0|::/0)["']
 
@@ -108,6 +132,74 @@ rules:
     pattern: |-
       (?i)\b"?actions?"?\s*[:=]\s*(?:\[[^\]]*)?"\*"
 
+  - id: TF-006
+    severity: low
+    file_types: [terraform]
+    message: >-
+      Ingress rule is open to the whole internet on a non-administrative port.
+      That is normal for a public web service, but confirm it is intentional and
+      that the service sits behind a load balancer or WAF where appropriate.
+      (Administrative, database and all-ports exposure is reported as high by
+      TF-001/TF-002.) Only reported when the whole rule block is visible.
+    within: |-
+      ^\s*(?:ingress\s*(?:\{|=)|resource\s+"aws_vpc_security_group_ingress_rule")
+    block_forbids: |-
+      \b(?:from_port|to_port)\s*=\s*(?:22|23|3389|5900|3306|5432|1433|1521|6379|9200|11211|27017|2375)\b|\b(?:ip_)?protocol\s*=\s*"-1"|\bto_port\s*=\s*65535\b
+    pattern: |-
+      ["'](?:0\.0\.0\.0/0|::/0)["']
+
+  - id: TF-007
+    severity: high
+    file_types: [terraform]
+    message: >-
+      Database or cluster is set to be publicly accessible. Keep databases in
+      private subnets and reach them through a bastion, VPN or application tier;
+      "publicly accessible" exposes the endpoint to the internet (the security
+      group is then the only barrier).
+    pattern: |-
+      ^\s*publicly_accessible\s*=\s*true\b
+
+  - id: TF-008
+    severity: medium
+    file_types: [terraform]
+    message: >-
+      Encryption at rest is explicitly turned off (storage_encrypted /
+      encrypted = false). Enable it, ideally with a customer-managed KMS key;
+      changing it later usually means rebuilding the resource.
+    pattern: |-
+      ^\s*(?:storage_encrypted|encrypted)\s*=\s*false\b
+
+  - id: TF-009
+    severity: medium
+    file_types: [terraform]
+    message: >-
+      The EKS API server endpoint is open to the whole internet
+      (public_access_cidrs contains 0.0.0.0/0). Restrict it to known networks,
+      or disable public access and use private endpoint access. Only detects the
+      single-line list form.
+    pattern: |-
+      \bpublic_access_cidrs\s*=\s*\[[^\]]*"0\.0\.0\.0/0"
+
+  - id: TF-010
+    severity: medium
+    file_types: [terraform]
+    message: >-
+      Instance metadata service v1 is still allowed (http_tokens = "optional").
+      IMDSv1 lets a server-side request forgery bug steal the instance role's
+      credentials. Set http_tokens = "required" (IMDSv2).
+    pattern: |-
+      ^\s*http_tokens\s*=\s*"optional"
+
+  - id: TF-011
+    severity: low
+    file_types: [terraform]
+    message: >-
+      Container repository allows mutable image tags, so a tag such as "1.4.2"
+      can be silently re-pointed at different code. Use IMMUTABLE tags and
+      deploy by digest.
+    pattern: |-
+      ^\s*image_tag_mutability\s*=\s*"MUTABLE"
+
   # --- Secrets (all file types, comments included) ------------------------
   - id: SEC-001
     severity: critical
@@ -138,14 +230,18 @@ rules:
     scan_comments: true
     message: >-
       Possible hard-coded credential (a password/token/key-named field assigned
-      a literal string). If real, rotate it and load it from a secret store or
-      CI secret instead. Heuristic: dismiss if it is a harmless value.
+      a literal value, quoted or not). If real, rotate it and load it from a
+      secret store or CI secret instead. Heuristic: dismiss if it is a harmless
+      value.
     # Lines holding an AWS key ID are excluded: SEC-001 already reports those,
-    # and one comment per secret is enough.
+    # and one comment per secret is enough. An UNQUOTED value must also contain a
+    # digit: that keeps prose in comments ("# token: use-the-vault") quiet while
+    # still catching an unquoted `password:` value in YAML or an `ENV ..._PASSWORD=`
+    # assignment in a Dockerfile.
     exclude: |-
-      (?i)change[_-]?me|example|placeholder|dummy|sample|your[_-]|<[^>]+>|\$\{|\$\(|\{\{|\bvar\.|\blocal\.|\bsecrets\.|x{4,}|\*{4,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b
+      (?i)change[_-]?me|example|placeholder|dummy|sample|your[_-]|<[^>]+>|\$\{|\$\(|\{\{|\bvar\.|\blocal\.|\bsecrets\.|\b(?:data|module|each|self|aws_[a-z_]+|random_[a-z_]+|tls_[a-z_]+)\.|x{4,}|\*{4,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b
     pattern: |-
-      (?i)(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|private[_-]?key)["']?\s*[:=]\s*["'][^"'\s]{8,}["']
+      (?i)(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|secret[_-]?key|private[_-]?key)["']?\s*[:=]\s*(?:["'][^"'\s]{8,}["']|(?=[^\s"'#,;{}$<>()\[\]]*\d)[^\s"'#,;{}$<>()\[\]]{8,})
 
   # --- Kubernetes ----------------------------------------------------------
   - id: K8S-001
@@ -194,6 +290,27 @@ rules:
     pattern: |-
       ^\s*(?:-\s+)?image:\s*["']?(?:[^\s"'@#]+:latest|[^\s:"'@#]+)["']?\s*(?:#.*)?$
 
+  - id: K8S-005
+    severity: high
+    file_types: [kubernetes]
+    message: >-
+      Pod shares a host namespace (hostNetwork / hostPID / hostIPC: true). It
+      can see or interfere with the node's network or processes, which breaks
+      the isolation containers are meant to provide. Remove it unless this is a
+      node-level agent that truly needs it.
+    pattern: |-
+      ^\s*(?:-\s+)?host(?:Network|PID|IPC):\s*true\b
+
+  - id: K8S-006
+    severity: medium
+    file_types: [kubernetes]
+    message: >-
+      Container may gain more privileges than its parent process
+      (allowPrivilegeEscalation: true). Set it to false unless a setuid binary
+      is genuinely required.
+    pattern: |-
+      ^\s*(?:-\s+)?allowPrivilegeEscalation:\s*true\b
+
   # --- Dockerfile ----------------------------------------------------------
   - id: DOCKER-001
     severity: medium
@@ -214,3 +331,13 @@ rules:
       dismiss this.)
     pattern: |-
       (?i)^\s*USER\s+(?:root|0)(?::\S+)?\s*(?:#.*)?$
+
+  - id: DOCKER-003
+    severity: medium
+    file_types: [dockerfile]
+    message: >-
+      A downloaded script is piped straight into a shell (curl|wget ... | sh).
+      The build then runs whatever that URL serves on the day, unverified. Pin a
+      version, download to a file, verify a checksum or signature, then run it.
+    pattern: |-
+      (?i)\b(?:curl|wget)\b[^|\n]{0,300}\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:ba|z|da|k)?sh\b

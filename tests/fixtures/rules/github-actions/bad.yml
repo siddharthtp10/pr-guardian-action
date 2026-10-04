@@ -23,3 +23,8 @@ jobs:
         with:
           script: |
             const t = "${{ github.event.comment.body }}"; // EXPECT:GHA-003
+  release:
+    runs-on: ubuntu-latest
+    permissions: write-all # EXPECT:GHA-004
+    steps:
+      - run: echo releasing

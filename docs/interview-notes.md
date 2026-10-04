@@ -739,3 +739,101 @@ pre-publication audit script that scans files and full history without ever
 printing a match. Fix the self-review exclusion for examples/ in the smoke job
 that turned the previous PR's check red.
 ```
+
+---
+
+## Rules review before v1 (17 -> 27 rules)
+
+Stage 3 above describes the original 17 rules. After a review pass (reading every
+rule and probing the engine with realistic inputs) the rule set changed before
+the first release.
+
+### Five questions
+
+**1. What did you find when you reviewed your own rules?**
+Three kinds of problem, each reproduced with a probe before changing anything.
+(a) A **miss**: `password: hunter2hunter2` in YAML and `ENV DB_PASSWORD=...` in a
+Dockerfile were not caught, because the rule only matched *quoted* values, which is
+not how YAML or Dockerfiles are usually written. (b) **Noise**: "ingress open to the
+internet" was `high` whether the port was 22 or 443, so every public load balancer
+failed the check. My own demo labelled an HTTPS rule "from anywhere" and flagged it
+`high`. (c) **Gaps** against well-known public guidance: public databases,
+unencrypted storage, an open EKS endpoint, IMDSv1, host networking, `write-all`
+permissions, `curl | sh`.
+
+**2. How can a one-line regex tell SSH from HTTPS when the port is on a different line?**
+It can't, so the engine gained a small capability: a rule can require, or forbid, a
+sibling line inside the *same block* (`block_requires` / `block_forbids`), found by
+indentation like the existing `within` check. TF-001 requires an administrative or
+database port, or all protocols, in the block; TF-006 (low) forbids them. The key
+design rule is unchanged from before: **if the block's closing line is not visible in
+the diff, the rule stays silent**, because "requires" cannot be confirmed and
+"forbids" cannot be ruled out from a fragment. That is tested for both.
+
+**3. Isn't matching unquoted secrets going to flood people with false positives?**
+That was the trade-off, so the unquoted form has two guards. The value must contain a
+digit, which keeps prose such as `# token: use-the-vault-instead` quiet while still
+catching real-looking values, and references (`${VAR}`, `var.x`, `module.x.y`,
+`random_password.db1.result`) are excluded. The price is an honest blind spot: an
+all-letters unquoted password is missed, and that is written down in the docs.
+
+**4. Why did you do this before tagging `v1` rather than after?**
+Because of my own versioning policy: for a tool that gates merges, a new `high` rule
+or a raised severity can fail PRs that passed yesterday, so after `v1` it would be a
+*major* bump. Doing it now costs nothing; doing it later costs a `v2`. New rules
+that are only `low` or `medium` are deliberately not gating under the default
+`fail-on: high`.
+
+**5. How do you decide a rule's severity?**
+Impact x confidence, and the default threshold means only `high`/`critical` block. So
+`high` only when a match is almost always a real problem (SSH open to the world,
+public database, host networking, `write-all`), `medium` for heuristics and
+context-dependent findings (encryption off, open EKS endpoint, IMDSv1), and `low` for
+"worth a glance" (public HTTPS, mutable image tags). The same ingress pattern is
+therefore `high` or `low` depending on what the rest of the block says.
+
+### One common failure and how I'd debug it
+
+**Symptom:** "TF-001 did not fire on my open SSH rule" (or TF-006 fired instead).
+**Debug:** (1) Is the **whole** `ingress { ... }` block in the diff, including its
+closing brace? If the hunk cuts it off, the rule is silent by design: look at the
+log's "commentable lines" for that file. (2) Is the port written as a literal in that
+block (`from_port = 22`)? A variable (`from_port = var.ssh_port`) or a range such as
+0-1024 is not recognised. (3) Is the CIDR on a single line in the form
+`["0.0.0.0/0"]`? (4) Is the file under a `paths` exclusion? Add the case to a fixture
+with an `EXPECT:` marker to see exactly what the engine decides.
+
+### Decisions worth remembering
+
+- **Probe first, then change.** Every claim in the review was reproduced against the
+  engine (and every fix re-probed), including the quiet cases, not only the loud ones.
+- **Each new rule ships with a positive fixture, a false-positive case and a docs
+  row**, because the test-suite refuses a rule that lacks any of them; the regex-timing
+  test was extended with new hostile line shapes for the new patterns.
+- **I added ten rules, not "about eight"**, because ECR tag mutability and the
+  `high`-severity host-namespace rule were cheap and low-noise. Candidates I
+  deliberately left out: hostPath volumes and added Linux capabilities (multi-line,
+  noisier), and `curl | sh` in workflows.
+- **Sources are public guidance only** (GitHub's Actions hardening guide, Kubernetes
+  Pod Security Standards, AWS and CIS benchmarks, Docker's best practices), which also
+  supports the "nothing from an employer" requirement.
+
+### Not verified
+
+All of this is verified against fixtures and probes, not against real-world
+repositories. The false-positive rate of the new rules on large, messy Terraform and
+Kubernetes code is unknown; running the Action on a few real (public) repositories in
+dry-run mode is the obvious next experiment.
+
+### Suggested commit
+
+```
+feat(rules): port-aware ingress, unquoted secrets and ten new rules
+
+Split internet-open ingress into high (administrative, database or all ports) and low
+(everything else) using new block_requires/block_forbids sibling checks that stay
+silent when the block is not fully visible. Make SEC-003 catch unquoted values. Add
+rules for public databases, disabled encryption, open EKS endpoints, IMDSv1, mutable
+ECR tags, host namespaces, privilege escalation, write-all permissions and piped
+install scripts, with fixtures, docs, examples and changelog updates.
+```

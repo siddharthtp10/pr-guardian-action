@@ -14,6 +14,7 @@ jobs:
   never-runs:
     if: ${{ false }}
     runs-on: ubuntu-latest
+    permissions: write-all
     steps:
       - uses: actions/checkout@v4
       - uses: some-org/deploy-action@v2

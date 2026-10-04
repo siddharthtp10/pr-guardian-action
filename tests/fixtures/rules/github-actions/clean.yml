@@ -22,3 +22,9 @@ jobs:
         uses: some-org/label@0123456789abcdef0123456789abcdef01234567
         with:
           title: ${{ github.event.pull_request.title }}
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - run: echo releasing

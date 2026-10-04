@@ -58,3 +58,56 @@ resource "aws_iam_policy" "json" {
     }]
   })
 }
+
+# Public web ingress is not an admin/DB port, so only the low rule would apply, and
+# restricted CIDRs never trigger anything. Neither is a finding here.
+resource "aws_security_group" "internal" {
+  name = "internal"
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/8"]
+  }
+
+  ingress {
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = ["10.20.0.0/16"]
+  }
+}
+
+resource "aws_db_instance" "main" {
+  identifier          = "main"
+  publicly_accessible = false
+  storage_encrypted   = true
+}
+
+resource "aws_ebs_volume" "scratch" {
+  availability_zone = "eu-west-1a"
+  encrypted         = true
+}
+
+resource "aws_eks_cluster" "main" {
+  name = "main"
+
+  vpc_config {
+    endpoint_public_access = false
+    public_access_cidrs    = ["203.0.113.0/24"]
+  }
+}
+
+resource "aws_instance" "web" {
+  ami = "ami-0abcdef1234567890"
+
+  metadata_options {
+    http_tokens = "required"
+  }
+}
+
+resource "aws_ecr_repository" "app" {
+  name                 = "app"
+  image_tag_mutability = "IMMUTABLE"
+}

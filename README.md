@@ -151,7 +151,7 @@ Files are never silently dropped: anything supported but not reviewed (over
 
 ## Rules
 
-17 generic rules ship in [`policies/default.yaml`](src/pr_guardian/policies/default.yaml);
+27 generic rules ship in [`policies/default.yaml`](src/pr_guardian/policies/default.yaml);
 see [docs/rules.md](docs/rules.md) for the table and the known blind spots.
 Rules are data (id, severity, file types, regex, message), validated strictly at
 load time, and only ever flag **added** lines. Messages are static text and

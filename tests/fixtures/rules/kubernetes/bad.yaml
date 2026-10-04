@@ -5,11 +5,14 @@ metadata:
 spec:
   template:
     spec:
+      hostNetwork: true # EXPECT:K8S-005
+      hostPID: true # EXPECT:K8S-005
       containers:
         - name: web # EXPECT:K8S-001
           image: nginx:latest # EXPECT:K8S-004
           securityContext:
             privileged: true # EXPECT:K8S-002
+            allowPrivilegeEscalation: true # EXPECT:K8S-006
             runAsUser: 0 # EXPECT:K8S-003
         - name: sidecar # EXPECT:K8S-001
           image: busybox # EXPECT:K8S-004
